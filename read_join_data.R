@@ -30,12 +30,25 @@ ybfmp_sites_file <- contentid::resolve("hash://sha256/acc9940abf5662e81ee594553e
 ybfmp_catch_file <- contentid::resolve("hash://sha256/110b7e3a5cac91b6a2619e2421c7c19f22fb4cc84335b1cc2e5d749080dc9d92")
 
 # read files
-djfmp_catch <- read_csv(djfmp_catch_file)
+djfmp_catch0 <- read_csv(djfmp_catch_file)
 djfmp_sites <- read_csv(djfmp_site_file)
 ybfmp_length <- read_csv(ybfmp_length_file)
-ybfmp_wq <- read_csv(ybfmp_wq_file)
+ybfmp_wq0 <- read_csv(ybfmp_wq_file)
 ybfmp_sites <- read_csv(ybfmp_sites_file)
-ybfmp_catch <- read_csv(ybfmp_catch_file)
+ybfmp_catch0 <- read_csv(ybfmp_catch_file)
 
 # Join data ------------------------------------
 # Are we adjusting for length frequency?
+
+
+# Filter data
+
+# From USFWS list
+stations_notincl <- c("SP000E","SP000W","SP001W","SP003E",
+                      "SP008E","SA001M","SA004W","SA007E","SA008W","SA009E", "SA010W")
+djfmp_catch <- djfmp_catch0 %>% 
+  filter(!(StationCode %in% stations_notincl))
+
+# beach seine only 
+ybfmp_wq <- ybfmp_wq0 %>%
+  filter(MethodCode == "BSEIN")
