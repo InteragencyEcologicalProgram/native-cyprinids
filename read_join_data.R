@@ -49,6 +49,12 @@ stations_notincl <- c("SP000E","SP000W","SP001W","SP003E",
 djfmp_catch <- djfmp_catch0 %>% 
   filter(!(StationCode %in% stations_notincl))
 
-# beach seine only 
-ybfmp_wq <- ybfmp_wq0 %>%
+# combine ybfmp length and wq tables
+ybfmp_lenwq0 <- left_join(ybfmp_length, ybfmp_wq0, by="EventID")
+
+# beach seine only
+ybfmp_lenwq <- ybfmp_lenwq0 %>%
   filter(MethodCode == "BSEIN")
+
+
+

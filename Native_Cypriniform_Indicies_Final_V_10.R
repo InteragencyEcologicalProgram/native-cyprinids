@@ -1,22 +1,3 @@
-# Background --------------------------------------------------------------
-
-# V_9 uses non-rotated PCs for the final analyses
-
-# V_8 Gets rid of the DB code that takes a little while to run
-
-# V_7 Updates DB code, removes subregion from index and environmental data calculations, removed FP inundation code, and removed WY flow code from scaled covariate dataframe 
-
-
-# Objectives of this study are:
-
-# 1) Create time series of and determine if there are trends in age-0 abundance indcies in the Delta and the Sacramento and SJ rivers for Sacramento Splittial, Sucker, and Pikeminnow
-
-# 2) Determine how mean flow during spawning, the timing (centroid) of flow, and mean water temp influence abundance
-
-# 3) Determine how mean flow during spawning, the timing (centroid) of flow, and mean water temp influence the center of distribution of these fishes in the Sacramento River.
-
-# 4) Discuss what regions are used for age-0 rearing (i.e. south delta is not an important rearing ground for age-0 SAPM and SASU). Can show with abundance index and heatmaps
-
 # Packages ----------------------------------------------------------------
 
 if (!require('tidyverse')) install.packages('tidyverse'); library('tidyverse')
@@ -37,6 +18,7 @@ windowsFonts(Times = windowsFont("Times New Roman"))
 # _______Sample Data_______ -------------------------------------------------------
 
 # Importing sample data that was obtained in Native_Cypriniform_Indicies_Final_V_7.R
+# Note - only includes seines with a condition code = 1 & removed stations that don't have a subarea
 
 # Outputting final sample data
 Sample_Table <- 
@@ -51,7 +33,7 @@ str(Sample_Table_Final)
 
 # ________Catch Data________ --------------------------------------
 
-# Importing catch data that was obtained in Native_Cypriniform_Indicies_Final_V_7.R
+# Importing catch data that was obtained in Native_Cypriniform_Indicies_Final_V_7.R (which was basically just a pull from their internal database)
 
 Catch_Table <-
   read.csv("Data/Catch_Table.csv")
