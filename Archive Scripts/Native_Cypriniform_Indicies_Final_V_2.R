@@ -1,0 +1,3471 @@
+# Background --------------------------------------------------------------
+
+# Objectives of this study are:
+
+# 1) Create time series of and determine if there are trends in age-0 abundance indcies in the Delta and the Sacramento and SJ rivers for Sacramento Splittial, Sucker, and Pikeminnow
+
+# 2) Determine how mean flow during spawning, the timing (centroid) of flow, and mean water temp influence abundance
+
+# 3) Determine how mean flow during spawning, the timing (centroid) of flow, and mean water temp influence the center of distribution of these fishes in the Sacramento River.
+
+# 4) Discuss what regions are used for age-0 rearing (i.e. south delta is not an important rearing ground for age-0 SAPM and SASU). Can show with abundance index and heatmaps
+
+# Packages ----------------------------------------------------------------
+
+if (!require('tidyverse')) install.packages('tidyverse'); library('tidyverse')
+if (!require('patchwork')) install.packages('patchwork'); library('patchwork')
+if (!require('lubridate')) install.packages('lubridate'); library('lubridate')
+if (!require('odbc')) install.packages('odbc'); library('odbc') # database functions
+if (!require('Kendall')) install.packages('Kendall'); library('Kendall')
+if (!require('car')) install.packages('car'); library('car')
+if (!require('MuMIn')) install.packages('MuMIn'); library('MuMIn')
+if (!require('lme4')) install.packages('lme4'); library('lme4')
+if (!require('afex')) install.packages('afex'); library('afex')
+if (!require('trend')) install.packages('trend'); library('trend')
+if (!require('rms')) install.packages('rms'); library('rms')
+options(scipen=999) # Getting rid of scientific notation
+windowsFonts(Times = windowsFont("Times New Roman"))
+
+# Database Connections ------------------------------------------------------------
+
+# Server Information
+sql_driver_str <- "SQL Server"
+djfmp_user_id <- "djfmpreader"
+djfmp_user_password <- "d1fmpR0ad3rPr0d"
+first_entry_server_name <- "ifw9bct-sqlha1"
+
+# Denver dataabse connection
+DJFMP_Database_Con <- odbc::dbConnect(drv=odbc::odbc(), 
+                                      driver=sql_driver_str, 
+                                      server=first_entry_server_name,
+                                      uid=djfmp_user_id, 
+                                      pwd=djfmp_user_password)
+
+# Lists all tables in the database 
+dbListTables(DJFMP_Database_Con)
+
+# _______Sample Data_______ -------------------------------------------------------
+
+# Setting dates for the sample queries
+date_start <- "1995-01-01"
+date_end <- "2019-12-31"
+
+# Importing CDFW Subarea Data
+# The subarea data are used to calculate SPLT abun. indices for the annual status and trends article
+CDFW_Subreagions <- 
+  read.csv("Data/CDFW_Subregions.csv")
+
+# Importing sample data from access
+
+# Getting sample data for DJFMP
+Sample_Query <- gsub("[\r\n]"," ", 
+                     sprintf("SELECT * FROM Sample WHERE SampleDate BETWEEN '%s' AND '%s';",
+                                           date_start, date_end))
+
+Sample_Table <- DBI::dbGetQuery(conn = DJFMP_Database_Con, 
+                                statement = Sample_Query)
+head(Sample_Table)
+str(Sample_Table)
+
+# Julian date (used in mutate function below)
+JD_Sample = as.POSIXlt(Sample_Table$SampleDate , 
+                       format = "%Y-%m-%d")
+head(JD_Sample)
+
+Sample_Table_Final <- 
+  Sample_Table %>%
+  left_join(CDFW_Subreagions, # linking CDFW subarea data
+            by = "StationCode") %>% 
+  mutate(Year = as.factor(lubridate::year(SampleDate)),
+         Month = as.factor(lubridate::month(SampleDate)),
+         StationCode = as.factor(StationCode),
+         SeineVolume = (SeineLength * SeineWidth * SeineDepth)/2,
+         Julian_Date = JD_Sample$yday + 1) %>% # Adding 1 to prevent jan 1 = 0
+  filter(MethodCode == "SEIN",
+         SeineLength >= 3 & SeineLength <= 15 & SeineWidth >= 3 & SeineWidth <= 15 & SeineDepth >= 0.2 & SeineDepth <= 1.5, # Filtering out seine measurements that fall outside of SOP
+         !(is.na(subarea)), # Removing stations that do not have a subarea
+         GearConditionCode == "1") # Only using seines with conditon code 1
+head(Sample_Table_Final)
+str(Sample_Table_Final)
+
+
+# ________Catch Data________ --------------------------------------
+
+# Importing catch data from access
+
+Catch_Query <- "SELECT * FROM Catch;"
+Catch_Table <- DBI::dbGetQuery(conn= DJFMP_Database_Con, statement= Catch_Query)
+head(Catch_Table)
+str(Catch_Table)
+
+# ________Other Data________ --------------------------------------
+
+# Discharge
+# Importing discharge data
+# Recieved from DAYFLOW
+
+Discharge = read.csv("data/dayflow_1994_2019.csv")
+head(Discharge)
+tail(Discharge)
+str(Discharge)
+Discharge$Year = as.factor(Discharge$Year)
+Discharge$Mo = as.factor(Discharge$Mo)
+
+# River mile
+# Will be used to determine center of distribution 
+
+Site_RM = read.csv("Data/Site_Coords.csv")
+head(Site_RM)
+str(Site_RM)
+
+# SAPM Data ---------------------------------------------------------------
+
+Catch_Table_SAPM <- 
+  Catch_Table %>% 
+  select(CatchID, SampleID, OrganismCode, ForkLength, CatchCount) %>% 
+  filter(OrganismCode == "SAPM")  # Only keeping catch for SAPM
+head(Catch_Table_SAPM)
+
+# Linking SAPM catch data to sample DF
+SAPM_Data <- 
+  Sample_Table_Final %>% 
+  left_join(Catch_Table_SAPM, by = "SampleID") %>% 
+  filter(!(is.na(SeineVolume))) %>% # Removing samples without volume data
+  select(SampleID, OrganismCode, StationCode, subarea, Area, SampleDate,
+         Julian_Date,Year, Month, SampleTime, MethodCode, GearConditionCode, DO,
+         WaterTemperature, Turbidity, Secchi, WaterVelocity, Conductivity,
+         SeineLength, SeineWidth, SeineDepth,SeineVolume, ForkLength, 
+         CatchCount) %>% 
+  replace_na(list(OrganismCode = ""))
+head(SAPM_Data)
+tail(SAPM_Data)
+str(SAPM_Data)
+
+# SPLT Data ---------------------------------------------------------------
+
+Catch_Table_SPLT <- 
+  Catch_Table %>% 
+  select(CatchID, SampleID, OrganismCode, ForkLength, CatchCount) %>% 
+  filter(OrganismCode == "SPLT")  # Only keeping catch for SPLT
+head(Catch_Table_SPLT)
+
+SPLT_Data <- 
+  Sample_Table_Final %>% 
+  left_join(Catch_Table_SPLT, by = "SampleID") %>% 
+  filter(!(is.na(SeineVolume))) %>% 
+  select(SampleID, OrganismCode, StationCode, subarea, Area, SampleDate,
+         Julian_Date,Year, Month, SampleTime, MethodCode, GearConditionCode, DO,
+         WaterTemperature, Turbidity, Secchi, WaterVelocity, Conductivity,
+         SeineLength, SeineWidth, SeineDepth,SeineVolume, ForkLength, 
+         CatchCount) %>% 
+  replace_na(list(OrganismCode = ""))
+head(SPLT_Data)
+tail(SPLT_Data)
+str(SPLT_Data)
+
+# SASU Data ---------------------------------------------------------------
+
+Catch_Table_SASU <- 
+  Catch_Table %>% 
+  select(CatchID, SampleID, OrganismCode, ForkLength, CatchCount) %>% 
+  filter(OrganismCode == "SASU")  # Only keeping catch for SASU
+head(Catch_Table_SASU)
+
+SASU_Data <- 
+  Sample_Table_Final %>% 
+  left_join(Catch_Table_SASU, by = "SampleID") %>% 
+  filter(!(is.na(SeineVolume))) %>% 
+  select(SampleID, OrganismCode, StationCode, subarea, Area, SampleDate,
+         Julian_Date,Year, Month, SampleTime, MethodCode, GearConditionCode, DO,
+         WaterTemperature, Turbidity, Secchi, WaterVelocity, Conductivity,
+         SeineLength, SeineWidth, SeineDepth,SeineVolume, ForkLength, 
+         CatchCount) %>%  
+  replace_na(list(OrganismCode = ""))
+head(SASU_Data)
+tail(SASU_Data)
+str(SASU_Data)
+
+# ***Length Frequency Analyses -----------------------------------------------
+
+## Length Frequency: Staring with length frequency analyses/histrograms to determine what months and length cutoffs to use when creating age-0 abundance indices 
+
+# Creating object to label x axis to better see length cutoffs for age-0 fish
+FL_Labels = seq(0, 200, by = 10)
+
+
+# SAPM --------------------------------------------------------------------
+
+# Looking to see what months have the highest catches and to see how distributions change
+SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", 
+         ForkLength > 24, ForkLength < 200) %>%
+  ggplot(aes(x = ForkLength, color = Area))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  facet_wrap(~Month)
+# Looks like age-0 fish are showing up in months 6 but high through 8
+# Catches of age-0 fish in month 12 occur mainly in the Delta and Sacramento River
+# Catches in the SJ occur mainly in months 5 and 6 (but are negligible in general)
+
+# See if months with highest catches depend on year
+SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", 
+         ForkLength > 24, ForkLength < 60,
+         Month %in% c(4:8, 12)) %>% 
+  group_by(Year, Month, ForkLength) %>% 
+  summarise(CatchCount = sum(CatchCount)) %>% 
+  ggplot(aes(x = ForkLength, y = CatchCount))+
+  geom_line(aes(color = Month))+
+  facet_wrap(~Year)+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+# Too busy to determine much but months with the highest catches of age-0 fish depend on year
+
+# To see what months have highest catches of SAPM
+SAPM_Catch_By_Month <- 
+  SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", 
+         ForkLength > 24, ForkLength < 60)%>%
+  group_by(Month)%>% 
+  summarise(Sum_Catch_Per_Month = sum(CatchCount))
+SAPM_Catch_By_Month
+
+# Highest catches in months 3 - 7
+str(SAPM_Catch_By_Month)
+
+SAPM_Catch_By_Month_Year <- 
+  SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", 
+         ForkLength > 24, ForkLength < 60)%>%
+  group_by(Month, Year, Area)%>% 
+  summarise(Sum_Catch_Per_Month = sum(CatchCount))
+SAPM_Catch_By_Month_Year
+
+SAPM_Catch_By_Month_Year$Month = as.numeric(SAPM_Catch_By_Month_Year$Month)
+ggplot(data = SAPM_Catch_By_Month_Year, 
+       aes(x = Month, y = Sum_Catch_Per_Month, color = Area)) +
+  geom_line() +
+  facet_wrap(~ Year)
+
+# Length frequency analyses
+
+# March
+SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", 
+         Month == 3, 
+         ForkLength > 24, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# April
+SAPM_Data %>% 
+  filter(OrganismCode == "SAPM",
+         Month == 4, 
+         ForkLength > 24, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# May
+SAPM_Data %>% 
+  filter(OrganismCode == "SAPM",
+         Month == 5, 
+         ForkLength > 24, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# Age-0 fish start showing up in June/July
+# We are missing the left tail of the distribution...therefore probably missing important (potential) variability
+# June
+SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", 
+         Month == 6, 
+         ForkLength > 24, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# July
+SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", 
+         Month == 7, 
+         ForkLength > 24, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# Based on length freq histograms, age 0 fish don't start showing up until June and July
+# June cuttoff for age-0 fish is ~ 60 mm
+# July cuttoff for age-0 fish is ~ 70 mm
+
+
+# SPLT --------------------------------------------------------------------
+
+# Looking to see what months have the highest catches and to see how distributions change
+SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", 
+         ForkLength > 24, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  facet_wrap(~Month)
+# Much easier than the other species. Only really catch in May and June. Some catch in July though 
+
+# See if months with highest catches depend on year
+SPLT_Data %>% 
+  filter(OrganismCode == "SPLT",
+         ForkLength > 24, ForkLength < 60, Month %in% 4:8) %>% 
+  group_by(Year, Month, ForkLength) %>% 
+  summarise(CatchCount = sum(CatchCount)) %>% 
+  ggplot(aes(x = ForkLength, y = CatchCount))+
+  geom_line(aes(color = Month))+
+  facet_wrap(~Year)+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+# Highest catch consistently in May. Year or two in June
+
+# To see what months have highest catches of SPLT
+SPLT_Catch_By_Month <- 
+  SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", 
+         ForkLength > 24, ForkLength < 200)%>%
+  group_by(Month)%>% 
+  summarise(Sum_Catch_Per_Month = sum(CatchCount))
+SPLT_Catch_By_Month
+# Highest catches in months 5 - 6...same as above
+
+SPLT_Catch_By_Month_Year <- 
+  SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", 
+         ForkLength > 24, ForkLength < 60, 
+         Month %in% c(4:7))%>%
+  group_by(Month, Year, Area)%>% 
+  summarise(Sum_Catch_Per_Month = sum(CatchCount))
+SPLT_Catch_By_Month_Year
+
+SPLT_Catch_By_Month_Year$Month = as.numeric(SPLT_Catch_By_Month_Year$Month)
+ggplot(data = SPLT_Catch_By_Month_Year, aes(x = Month, y = Sum_Catch_Per_Month, color = Area)) +
+  geom_point()+
+  facet_wrap(~ Year, scales = "free_y")
+## There are a couple of months where catch is higher in month 4 than 6, but this only occurs in one area (2 years in the Delta). Feel confident that we can just focus analyeses on months 5 and 6. 
+
+# May
+SPLT_Data %>% 
+  filter(OrganismCode == "SPLT",
+         Month == 5, 
+         ForkLength > 24, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength, fill = Year))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# June
+SPLT_Data %>% 
+  filter(OrganismCode == "SPLT",
+         Month == 6, 
+         ForkLength > 24, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  facet_wrap(~Month)
+
+# Based on length freq histograms, age 0 fish make up the majority of the catch during both months
+# May cuttoff for age-0 fish is ~ 50 mm
+# June cuttoff for age-0 fish is ~ 60 mm
+
+# SASU --------------------------------------------------------------------
+
+# To see what months have highest catches of SASU
+
+# Looking to see what months have the highest catches and to see how distributions change
+SASU_Data %>% 
+  filter(OrganismCode == "SASU",
+         ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength, color = Area))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  facet_wrap(~Month)
+# Highest catches in months 5 and 6 but also high catches in months 3:4, 7, and 12
+# Catches in month 12 (3rd highest catches of the year...) occur mainly in the Delta and Sacramento River
+# Catches in the SJ occur mainly in months 5 and 6
+# In general, catches are spread out over much more of the year than SPLT, or SAPM
+
+# See if months with highest catches depend on year
+SASU_Data %>% 
+  filter(OrganismCode == "SASU", 
+         ForkLength > 24, ForkLength < 60, 
+         Month %in% c(4:8, 12)) %>% 
+  group_by(Year, Month, ForkLength) %>% 
+  summarise(CatchCount = sum(CatchCount)) %>% 
+  ggplot(aes(x = ForkLength, y = CatchCount))+
+  geom_line(aes(color = Month))+
+  facet_wrap(~Year)+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+# Too busy but...catches tend to be highest in May and June
+# In some years catches are highest in December...
+# This might be interesting to look at in a different project
+
+# Highest catches in months 4 - 7, 12; Peak in 5 and 6
+
+# Length frequency analyses
+
+# April
+SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength, Month == 4, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# May
+SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength, Month == 5, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# June
+SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength, Month == 6, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# July
+SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength, Month == 7, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# December
+SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength, Month == 12, ForkLength < 200) %>% 
+  ggplot(aes(x = ForkLength))+
+  geom_histogram(fill = "black")+
+  scale_x_continuous(expand = c(0,.5), labels = FL_Labels, breaks = FL_Labels)+
+  theme_classic(base_size = 15)
+
+# Going to use months 5 and 6 because they have the highest catches of age-0 fish
+# May cuttoff for age-0 fish is ~ 50 mm
+# June cuttoff for age-0 fish is ~ 65 mm
+# I am also going to look at December because it's interesting to have a peak later in the year. They are thought to spawn upstream in tribs so the catches in December might have something to do with flow. Brian...any ideas?
+
+
+#***Plus Count Proportions --------------------------------------------------
+
+# I will be using FL of Age-0 fishes caught within a seine haul to proporiton FL of plus count fish
+
+# Adjusted Count =  Total_Count * (FL_Range_Count/FL_Count)
+
+# Total_count = All fish in one sample including plus count fish
+# FL_Range_Count = Count of fish in the FL range that we are using
+# FL_Count = Count of measured fish
+
+# CPUE = Adjusted Cout/Seine Volume
+
+
+# SAPM  -------------------------------------------------------------------
+
+# Based on length freq histograms, age 0 fish don't start showing up until June and July
+# June cuttoff for age-0 fish is ~ 60 mm
+# July cuttoff for age-0 fish is ~ 70 mm
+
+###### Original Age-0 Analyses
+
+## June
+SAPM_Plus_Count_June <- 
+  SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", ForkLength == 0, Month == 6) %>%
+  group_by(SampleID) %>% 
+  summarise(Plus_Count = sum(CatchCount))
+
+SAPM_FL_Count_June <- 
+  SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", ForkLength > 0, Month == 6) %>%
+  group_by(SampleID)%>% 
+  summarise(FL_Count = sum(CatchCount))
+
+# Count of all fish (including plus counts) that were measured in June
+SAPM_Total_June <- 
+  full_join(SAPM_FL_Count_June, SAPM_Plus_Count_June,  by = "SampleID")
+
+SAPM_Total_June[is.na(SAPM_Total_June)] = 0  
+SAPM_Total_June$Total_Count = SAPM_Total_June$FL_Count + SAPM_Total_June$Plus_Count
+
+# Getting count of all age-0 fish that were caught in June
+SAPM_FL_Range_June <- 
+  SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", ForkLength > 24, ForkLength <61, Month == 6) %>%
+  group_by(SampleID) %>% 
+  summarise(FL_Range = sum(CatchCount))
+
+SAPM_Total_June_Final <- 
+  left_join(SAPM_Total_June, SAPM_FL_Range_June, by = "SampleID")
+colnames(SAPM_Total_June_Final) = c("SampleID", "FL_Count", "Plus_Count", "Total_Count", "FL_Range_Count")
+SAPM_Total_June_Final[is.na(SAPM_Total_June_Final)] = 0 
+head(SAPM_Total_June_Final)
+str(SAPM_Total_June_Final)
+
+## July
+SAPM_Plus_Count_July <- 
+  SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", ForkLength == 0, Month == 7) %>%
+  group_by(SampleID) %>% 
+  summarise(Plus_Count = sum(CatchCount))
+
+SAPM_FL_Count_July <- 
+  SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", ForkLength > 0, Month == 7)%>%
+  group_by(SampleID)%>% 
+  summarise(FL_Count = sum(CatchCount))
+
+SAPM_Total_July <- 
+  full_join(SAPM_FL_Count_July, SAPM_Plus_Count_July,  by = "SampleID")
+ 
+SAPM_Total_July[is.na(SAPM_Total_July)] = 0  
+SAPM_Total_July$Total_Count = SAPM_Total_July$FL_Count + SAPM_Total_July$Plus_Count
+
+SAPM_FL_Range_July <- 
+  SAPM_Data %>% 
+  filter(OrganismCode == "SAPM", ForkLength > 24, ForkLength <71, Month == 7) %>%
+  group_by(SampleID) %>% 
+  summarise(FL_Range = sum(CatchCount))
+
+SAPM_Total_July_Final <- 
+  left_join(SAPM_Total_July, SAPM_FL_Range_July, by = "SampleID")
+colnames(SAPM_Total_July_Final) = c("SampleID", "FL_Count", "Plus_Count", "Total_Count", "FL_Range_Count")
+SAPM_Total_July_Final[is.na(SAPM_Total_July_Final)] = 0 
+head(SAPM_Total_July_Final)
+str(SAPM_Total_July_Final)
+
+## Combining both months
+SAPM_Final <- 
+  bind_rows(SAPM_Total_June_Final, SAPM_Total_July_Final)
+head(SAPM_Final)
+str(SAPM_Final)
+
+# DF where I am calculating adjusted count
+# Also standardizing Volume, Julian Date, and Julian Date^2 for model to est. abun.
+SAPM_Index <- 
+  full_join(subset(SAPM_Data, !duplicated(SampleID)), SAPM_Final, 
+            by = "SampleID") %>% 
+  mutate(Adjusted_Count = Total_Count * (FL_Range_Count/FL_Count)) %>% 
+  replace_na(list(CatchCount = 0, FL_Count = 0, Plus_Count = 0,
+                  Total_Count = 0, FL_Range_Count = 0, Adjusted_Count = 0)) %>% 
+  filter(Month %in% c(6:7)) %>% 
+  mutate(CPUE = Adjusted_Count/SeineVolume,
+         Volume_Z = scale(SeineVolume),
+         Julian_Z = scale(Julian_Date),
+         Julian_Sq_Z = scale(Julian_Date^2),
+         Region = as.factor(case_when(subarea %in% c(1:5) ~ "Delta",
+                            subarea %in% c(6:8) ~ "Sacramento",
+                            subarea %in% c(9:10) ~ "San_Joaquin")))
+head(SAPM_Index, 20) 
+
+# Outputting data
+write.csv(SAPM_Index, "Data/SAPM_Index.csv", row.names = FALSE)
+
+# SPLT --------------------------------------------------------------------
+
+# Based on length freq histograms, age 0 fish make up the majority of the catch during both months
+
+# May cuttoff for age-0 fish is ~ 50 mm
+# June cuttoff for age-0 fish is ~ 60 mm
+
+## May
+SPLT_Plus_Count_May <- 
+  SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", ForkLength == 0, Month == 5) %>%
+  group_by(SampleID) %>% 
+  summarise(Plus_Count = sum(CatchCount))
+
+SPLT_FL_Count_May <- 
+  SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", ForkLength > 0, Month == 5) %>%
+  group_by(SampleID) %>% 
+  summarise(FL_Count = sum(CatchCount))
+
+SPLT_Total_May <- 
+  full_join(SPLT_FL_Count_May, SPLT_Plus_Count_May,  by = "SampleID")
+ 
+SPLT_Total_May[is.na(SPLT_Total_May)] = 0  
+SPLT_Total_May$Total_Count = SPLT_Total_May$FL_Count + SPLT_Total_May$Plus_Count
+
+SPLT_FL_Range_May <- 
+  SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", ForkLength > 24, ForkLength <51, Month == 5) %>%
+  group_by(SampleID) %>% 
+  summarise(FL_Range = sum(CatchCount))
+
+SPLT_Total_May_Final <- 
+  left_join(SPLT_Total_May, SPLT_FL_Range_May, by = "SampleID")
+colnames(SPLT_Total_May_Final) = c("SampleID", "FL_Count", "Plus_Count", "Total_Count", "FL_Range_Count")
+SPLT_Total_May_Final[is.na(SPLT_Total_May_Final)] = 0 
+head(SPLT_Total_May_Final)
+
+## June
+SPLT_Plus_Count_June <- 
+  SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", ForkLength == 0, Month == 6)%>%
+  group_by(SampleID)%>% 
+  summarise(Plus_Count = sum(CatchCount))
+
+SPLT_FL_Count_June <- 
+  SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", ForkLength > 0, Month == 6)%>%
+  group_by(SampleID)%>% 
+  summarise(FL_Count = sum(CatchCount))
+
+SPLT_Total_June <- 
+  full_join(SPLT_FL_Count_June, SPLT_Plus_Count_June,  by = "SampleID")
+ 
+SPLT_Total_June[is.na(SPLT_Total_June)] = 0  
+SPLT_Total_June$Total_Count = SPLT_Total_June$FL_Count + SPLT_Total_June$Plus_Count
+
+SPLT_FL_Range_June <- 
+  SPLT_Data %>% 
+  filter(OrganismCode == "SPLT", ForkLength > 24, ForkLength <61, Month == 6)%>%
+  group_by(SampleID)%>% 
+  summarise(FL_Range = sum(CatchCount))
+
+SPLT_Total_June_Final <- 
+  left_join(SPLT_Total_June, SPLT_FL_Range_June, by = "SampleID")
+colnames(SPLT_Total_June_Final) = c("SampleID", "FL_Count", "Plus_Count", "Total_Count", "FL_Range_Count")
+SPLT_Total_June_Final[is.na(SPLT_Total_June_Final)] = 0 
+head(SPLT_Total_June_Final)
+
+## Combining all months
+SPLT_Final <- 
+  bind_rows(SPLT_Total_May_Final, SPLT_Total_June_Final)
+str(SPLT_Final)
+
+# DF where I am calculating adjusted count
+# Also standardizing Volume, Julian Date, and Julian Date^2 for model to est. abun.
+SPLT_Index <- 
+  full_join(subset(SPLT_Data, !duplicated(SampleID)), SPLT_Final, 
+            by = "SampleID") %>% 
+  mutate(Adjusted_Count = Total_Count * (FL_Range_Count/FL_Count)) %>% 
+  replace_na(list(CatchCount = 0, FL_Count = 0, Plus_Count = 0,
+                  Total_Count = 0, FL_Range_Count = 0, Adjusted_Count = 0)) %>% 
+  filter(Month %in% c(5:6)) %>% 
+  mutate(CPUE = Adjusted_Count/SeineVolume,
+         Volume_Z = scale(SeineVolume),
+         Julian_Z = scale(Julian_Date),
+         Julian_Sq_Z = scale(Julian_Date^2),
+         Region = case_when(subarea %in% c(1:5) ~ "Delta",
+                            subarea %in% c(6:8) ~ "Sacramento",
+                            subarea %in% c(9:10) ~ "San_Joaquin"))
+head(SPLT_Index, 20) 
+
+# Outputting data
+write.csv(SPLT_Index, "Data/SPLT_Index.csv", row.names = FALSE)
+
+# SASU --------------------------------------------------------------------
+# Going to use months 5 and 6 because they have the highest catches
+# Based on length freq histograms, age 0 fish make up the majority of the catch during both months
+# May cuttoff for age-0 fish is ~ 50 mm
+# June cuttoff for age-0 fish is ~ 65 mm
+
+## May
+SASU_Plus_Count_May <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength == 0, Month == 5) %>%
+  group_by(SampleID) %>% 
+  summarise(Plus_Count = sum(CatchCount))
+
+SASU_FL_Count_May <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength > 0, Month == 5) %>%
+  group_by(SampleID) %>% 
+  summarise(FL_Count = sum(CatchCount))
+
+SASU_Total_May <- 
+  full_join(SASU_FL_Count_May, SASU_Plus_Count_May,  by = "SampleID")
+ 
+SASU_Total_May[is.na(SASU_Total_May)] = 0  
+SASU_Total_May$Total_Count = SASU_Total_May$FL_Count + SASU_Total_May$Plus_Count
+
+SASU_FL_Range_May <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength >= 25, ForkLength < 51, Month == 5) %>%
+  group_by(SampleID) %>% 
+  summarise(FL_Range = sum(CatchCount))
+
+SASU_Total_May_Final <- 
+  left_join(SASU_Total_May, SASU_FL_Range_May, by = "SampleID")
+colnames(SASU_Total_May_Final) = c("SampleID", "FL_Count", "Plus_Count", "Total_Count", "FL_Range_Count")
+SASU_Total_May_Final[is.na(SASU_Total_May_Final)] = 0 
+head(SASU_Total_May_Final)
+
+## June
+SASU_Plus_Count_June <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength == 0, Month == 6)%>%
+  group_by(SampleID)%>% 
+  summarise(Plus_Count = sum(CatchCount))
+
+SASU_FL_Count_June <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength > 0, Month == 6) %>%
+  group_by(SampleID)%>% 
+  summarise(FL_Count = sum(CatchCount))
+
+SASU_Total_June <- 
+  full_join(SASU_FL_Count_June, SASU_Plus_Count_June,  by = "SampleID")
+
+SASU_Total_June[is.na(SASU_Total_June)] = 0  
+SASU_Total_June$Total_Count = SASU_Total_June$FL_Count + SASU_Total_June$Plus_Count
+
+SASU_FL_Range_June <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength >= 25, ForkLength <66, Month == 6)%>%
+  group_by(SampleID)%>% 
+  summarise(FL_Range = sum(CatchCount))
+
+SASU_Total_June_Final <- 
+  left_join(SASU_Total_June, SASU_FL_Range_June, by = "SampleID")
+colnames(SASU_Total_June_Final) = c("SampleID", "FL_Count", "Plus_Count", "Total_Count", "FL_Range_Count")
+SASU_Total_June_Final[is.na(SASU_Total_June_Final)] = 0 
+head(SASU_Total_June_Final)
+
+## December
+SASU_Plus_Count_December <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength == 0, Month == 12) %>%
+  group_by(SampleID)%>% 
+  summarise(Plus_Count = sum(CatchCount))
+
+SASU_FL_Count_December <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength > 0, Month == 12) %>%
+  group_by(SampleID)%>% 
+  summarise(FL_Count = sum(CatchCount))
+
+SASU_Total_December <- 
+  full_join(SASU_FL_Count_December, SASU_Plus_Count_December,  by = "SampleID")
+ 
+SASU_Total_December[is.na(SASU_Total_December)] = 0  
+SASU_Total_December$Total_Count = SASU_Total_December$FL_Count + SASU_Total_December$Plus_Count
+
+SASU_FL_Range_December <- 
+  SASU_Data %>% 
+  filter(OrganismCode == "SASU", ForkLength >= 25, ForkLength <66, Month == 12)%>%
+  group_by(SampleID)%>% 
+  summarise(FL_Range = sum(CatchCount))
+
+SASU_Total_December_Final <- 
+  left_join(SASU_Total_December, SASU_FL_Range_December, by = "SampleID")
+colnames(SASU_Total_December_Final) = c("SampleID", "FL_Count", "Plus_Count", "Total_Count", "FL_Range_Count")
+SASU_Total_December_Final[is.na(SASU_Total_December_Final)] = 0 
+head(SASU_Total_December_Final)
+
+## Combining all months
+SASU_Final <- 
+  bind_rows(SASU_Total_May_Final, SASU_Total_June_Final, SASU_Total_December_Final)
+str(SASU_Final)
+
+# DF where I am calculating adjusted count
+# Also standardizing Volume, Julian Date, and Julian Date^2 for model to est. abun.
+SASU_Index <- 
+  full_join(subset(SASU_Data, !duplicated(SampleID)), SASU_Final, 
+            by = "SampleID") %>% 
+  mutate(Adjusted_Count = Total_Count * (FL_Range_Count/FL_Count)) %>% 
+  replace_na(list(CatchCount = 0, FL_Count = 0, Plus_Count = 0,
+                  Total_Count = 0, FL_Range_Count = 0, Adjusted_Count = 0)) %>% 
+  filter(Month %in% c(5:6, 12)) %>% 
+  mutate(CPUE = Adjusted_Count/SeineVolume,
+         Volume_Z = scale(SeineVolume),
+         Julian_Z = scale(Julian_Date),
+         Julian_Sq_Z = scale(Julian_Date^2),
+         Region = case_when(subarea %in% c(1:5) ~ "Delta",
+                            subarea %in% c(6:8) ~ "Sacramento",
+                            subarea %in% c(9:10) ~ "San_Joaquin"))
+head(SASU_Index, 20) 
+
+# Outputting data
+write.csv(SASU_Index, "Data/SASU_Index.csv", row.names = FALSE)
+
+# ***Indicies ----------------------------------------------------------------
+
+## Age-0 Indicies: Using plus count proportioned data to create age-0 abundance indices
+
+# SAPM --------------------------------------------------------------------
+
+# Calculating mean June and July CPUE for each station 
+# We don't sample subarea 8 anymore so I am going to remove it
+
+##### Subarea 8 is no longer beind sampled...removing subarea 8 to see if it influences results of Sac Models
+SAPM_Index_Final <-
+  SAPM_Index %>%
+  filter(subarea %in% c(1:7, 9:10)) %>%
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  spread(subarea, CPUE)
+
+# Summing subareas 1-5 for Delta Index, 6-8 for sac and 9-10 for SJ River
+SAPM_Index_Final$Delta_Index = rowSums(SAPM_Index_Final[,2:6])
+SAPM_Index_Final$Sac_River_Index = rowSums(SAPM_Index_Final[,7:8]) 
+SAPM_Index_Final$San_Joaquin_River_Index = rowSums(SAPM_Index_Final[,9:10], na.rm = T) # na.rm = T because we didn't sample in subarea 10 in 1995 and 1996
+SAPM_Index_Final$Delta_Wide_Index = rowSums(SAPM_Index_Final[,11:13])
+
+write.csv(SAPM_Index_Final, "Output/SAPM_Index_Final.csv", row.names = FALSE)
+
+# SPLT --------------------------------------------------------------------
+
+# Subarea 8 is no longer beind sampled...removing subarea 8 
+SPLT_Index_Final <-
+  SPLT_Index %>%
+  filter(subarea %in% c(1:7, 9:10)) %>%
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  spread(subarea, CPUE)
+
+# Summing subareas 1-5 for Delta Index, 6-8 for sac and 9-10 for SJ River
+SPLT_Index_Final$Delta_Index = rowSums(SPLT_Index_Final[,2:6])
+SPLT_Index_Final$Sac_River_Index = rowSums(SPLT_Index_Final[,7:8]) 
+SPLT_Index_Final$San_Joaquin_River_Index = rowSums(SPLT_Index_Final[,9:10], na.rm = T) # na.rm = T because we didn't sample in subarea 10 in 1995 and 1996
+SPLT_Index_Final$Delta_Wide_Index = rowSums(SPLT_Index_Final[,11:13])
+
+write.csv(SPLT_Index_Final, "Output/SPLT_Index_Final.csv", row.names = FALSE)
+
+
+# SASU --------------------------------------------------------------------
+
+# Subarea 8 is no longer beind sampled...removing subarea 8 
+SASU_Index_Final <-
+  SASU_Index %>%
+  filter(subarea %in% c(1:7, 9:10),
+         Month != 12) %>% # Removing December
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  spread(subarea, CPUE)
+
+
+# Summing subareas 1-5 for Delta Index, 6-8 for sac and 9-10 for SJ River
+SASU_Index_Final$Delta_Index = rowSums(SASU_Index_Final[,2:6])
+SASU_Index_Final$Sac_River_Index = rowSums(SASU_Index_Final[,7:8]) 
+SASU_Index_Final$San_Joaquin_River_Index = rowSums(SASU_Index_Final[,9:10], na.rm = T) # na.rm = T because we didn't sample in subarea 10 in 1995 and 1996
+SASU_Index_Final$Delta_Wide_Index = rowSums(SASU_Index_Final[,11:13])
+
+write.csv(SASU_Index_Final, "Output/SASU_Index_Final.csv", row.names = FALSE)
+
+## December w/o subarea 8
+
+SASU_Index_Dec_Final <-
+  SASU_Index %>%
+  filter(subarea %in% c(1:7, 9:10),
+         Month == 12) %>%
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(CPUE = mean(CPUE)) %>% 
+  spread(subarea, CPUE)
+
+
+# Summing subareas 1-5 for Delta Index, 6-8 for sac and 9-10 for SJ River
+SASU_Index_Dec_Final$Delta_Index_December = rowSums(SASU_Index_Dec_Final[,2:6], na.rm = T)
+SASU_Index_Dec_Final$Sac_River_Index_December = rowSums(SASU_Index_Dec_Final[,7:8], na.rm = T) # na.rm = T because we are no longer sampling in subarea 8
+SASU_Index_Dec_Final$San_Joaquin_River_Index_December = rowSums(SASU_Index_Dec_Final[,9:10], na.rm = T) # na.rm = T because we didn't sample in subarea 10 in 1995 and 1996
+
+write.csv(SASU_Index_Dec_Final, "Output/SASU_Index_Dec_Final.csv", row.names = FALSE)
+
+
+# ***Center of Dist --------------------------------------------------------------
+
+## Centroid
+# Looking at center of distribution 
+# Calculated using the months used to make the indices
+# Formula taken from Sommer et al. 2011
+# CD = sum(RiverKilo * CPUE)/sum(CPUE)
+# Going to be used as response variable in model with flow/timing as covariates (below)
+
+# Removed subarea 8 because we haven't sampled it since 2013
+
+
+# SAPM --------------------------------------------------------------------
+
+head(SAPM_Index)
+head(Site_RM)
+
+SAPM_RM <- 
+  left_join(SAPM_Index, Site_RM, by = "StationCode") %>% 
+  filter(CPUE != 0) # Removing records where CPUE was 0
+head(SAPM_RM)
+
+# Sacramento River
+SAPM_RM_Sac <-
+  SAPM_RM %>% 
+  filter(grepl("SR", StationCode),
+         subarea != "8") # Selecting stations that begin w/ SR
+head(SAPM_RM_Sac)
+
+# SJ River
+SAPM_RM_SJ <-
+  SAPM_RM %>% 
+  filter(grepl("SJ", StationCode)) # Selecting stations that begin w/ SR
+head(SAPM_RM_SJ)
+
+SAPM_CDist_SAC <- 
+  SAPM_RM_Sac %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(CDist_SAC = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SAPM_CDist_SAC)
+
+SAPM_Month_CDist_SAC <- 
+  SAPM_RM_Sac %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year, Month) %>% 
+  summarise(CDist_SAC = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SAPM_Month_CDist_SAC)
+
+SAPM_CDist_SJ <- 
+  SAPM_RM_SJ %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(CDist_SJ = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SAPM_CDist_SJ)
+
+SAPM_CDist <- 
+  SAPM_CDist_SAC %>% 
+  left_join(SAPM_CDist_SJ, by = "Year")
+head(SAPM_CDist)
+
+# SPLT --------------------------------------------------------------------
+
+head(SPLT_Index)
+head(Site_RM)
+
+SPLT_RM <- 
+  left_join(SPLT_Index, Site_RM, by = "StationCode") %>% 
+  filter(CPUE != 0) # Removing records where CPUE was 0
+head(SPLT_RM)
+
+# Sacramento River
+SPLT_RM_Sac <-
+  SPLT_RM %>% 
+  filter(grepl("SR", StationCode),
+         subarea != "8") # Selecting stations that begin w/ SR
+head(SPLT_RM_Sac)
+
+# SJ River
+SPLT_RM_SJ <-
+  SPLT_RM %>% 
+  filter(grepl("SJ", StationCode)) # Selecting stations that begin w/ SR
+head(SPLT_RM_SJ)
+
+SPLT_CDist_SAC <- 
+  SPLT_RM_Sac %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(CDist_SAC = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SPLT_CDist_SAC)
+
+SPLT_Month_CDist_SAC <- 
+  SPLT_RM_Sac %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year, Month) %>% 
+  summarise(CDist_SAC = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SPLT_Month_CDist_SAC)
+
+SPLT_CDist_SJ <- 
+  SPLT_RM_SJ %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(CDist_SJ = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SPLT_CDist_SJ)
+
+SPLT_CDist <- 
+  SPLT_CDist_SAC %>% 
+  left_join(SPLT_CDist_SJ, by = "Year")
+head(SPLT_CDist)
+
+# SASU --------------------------------------------------------------------
+
+head(SASU_Index)
+head(Site_RM)
+
+SASU_RM <- 
+  left_join(SASU_Index, Site_RM, by = "StationCode") %>% 
+  filter(CPUE != 0) # Removing records where CPUE was 0
+head(SASU_RM)
+
+# Sacramento River
+SASU_RM_Sac <-
+  SASU_RM %>% 
+  filter(grepl("SR", StationCode),
+         subarea != "8") # Selecting stations that begin w/ SR
+head(SASU_RM_Sac)
+
+# SJ River
+SASU_RM_SJ <-
+  SASU_RM %>% 
+  filter(grepl("SJ", StationCode)) # Selecting stations that begin w/ SR
+head(SASU_RM_SJ)
+
+SASU_CDist_SAC <- 
+  SASU_RM_Sac %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(CDist_SAC = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SASU_CDist_SAC)
+
+SASU_Month_CDist_SAC <- 
+  SASU_RM_Sac %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year, Month) %>% 
+  summarise(CDist_SAC = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SASU_Month_CDist_SAC)
+
+SASU_CDist_SJ <- 
+  SASU_RM_SJ %>% 
+  filter(Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(CDist_SJ = sum(RiverKilo * CPUE)/sum(CPUE))
+head(SASU_CDist_SJ)
+
+SASU_CDist <- 
+  SASU_CDist_SAC %>% 
+  left_join(SASU_CDist_SJ, by = "Year")
+head(SASU_CDist)
+
+# ***Covariates -----------------------------------------------------------
+
+
+# i. Discharge ---------------------------------------------------------------
+
+head(Discharge)
+
+## Discharge data is taken DNR Day Flow data
+# SJ = SJR
+# Sac = SAC - not going to use YOLO because the sites are upstream of the bypass
+# Delta = OUT
+
+# Creating julian day in discharge dataframe
+JD_Dis = as.POSIXlt(Discharge$Date, format = "%d-%b-%y")
+
+Discharge$Julian_Date <- JD_Dis$yday + 1
+# Julian data adds 1 to Jan 1st so it's not 0
+
+# Variables were created below anticipating reviewers thinking about flow earlier that Jan
+# Made a variable for water year w/ Oct as month 1
+# Then did a julian date with Oct 1 as 1
+# Did case when due to leap years
+Discharge <- 
+  Discharge %>% 
+  mutate(Water_Year = as.factor(case_when(as.numeric(Mo) > 9 
+                                          ~ as.numeric(Year) + 1994,
+                                          as.numeric(Mo) < 10 
+                                          ~ as.numeric(Year) + 1993)),
+         Julian_Date_Final = 
+           case_when(Year %in% c(1996, 2000, 2004, 2008, 2012, 2016) 
+                     & Julian_Date > 274 
+                     ~ Julian_Date - 274,
+                     !(Year %in% c(1996, 2000, 2004, 2008, 2012, 2016)) 
+                     & Julian_Date > 273 
+                     ~ Julian_Date - 273,
+                     Year %in% c(1996, 2000, 2004, 2008, 2012, 2016) 
+                     & Julian_Date < 274 
+                     ~ Julian_Date + 92,
+                     !(Year %in% c(1996, 2000, 2004, 2008, 2012, 2016)) 
+                     & Julian_Date < 273 
+                     ~ Julian_Date + 92))
+                                       
+
+# /// Mean Flow Spawning /// ----------------------------------------------
+
+# Examining mean discharge during spawning
+
+
+# SAPM --------------------------------------------------------------------
+
+### Going to use mean discharge data for April and May (during peak spawning)
+
+## San Joaquin
+SJ_Mean_Discharge_SAPM <- 
+  Discharge %>% 
+  filter(Mo %in% 4:5 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_SJ_Discharge = mean(SJR))
+SJ_Mean_Discharge_SAPM
+
+## Sacramento
+SAC_Mean_Discharge_SAPM <- 
+  Discharge %>% 
+  filter(Mo %in% 4:5 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_SAC_Discharge = mean(SAC))
+SAC_Mean_Discharge_SAPM
+
+## Delta
+DELTA_Mean_Discharge_SAPM <- 
+  Discharge %>% 
+  filter(Mo %in% 4:5 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_DELTA_Discharge = mean(OUT))
+DELTA_Mean_Discharge_SAPM
+
+# Combining Data
+SAPM_Mean_Disc <- 
+  cbind(SJ_Mean_Discharge_SAPM, SAC_Mean_Discharge_SAPM[,2], DELTA_Mean_Discharge_SAPM[,2])
+head(SAPM_Mean_Disc)
+
+# SPLT --------------------------------------------------------------------
+
+## SPLT
+# Peak spawning in April and May
+# Going to use March and April
+
+## San Joaquin
+SJ_Mean_Discharge_SPLT <- 
+  Discharge %>% 
+  filter(Mo %in% 3:4 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_SJ_Discharge = mean(SJR))
+SJ_Mean_Discharge_SPLT
+
+## Sacramento
+SAC_Mean_Discharge_SPLT <- 
+  Discharge %>% 
+  filter(Mo %in% 3:4 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_SAC_Discharge = mean(SAC))
+SAC_Mean_Discharge_SPLT
+
+## Delta
+DELTA_Mean_Discharge_SPLT <- 
+  Discharge %>% 
+  filter(Mo %in% 3:4 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_DELTA_Discharge = mean(OUT))
+DELTA_Mean_Discharge_SPLT
+
+# Combining Data
+SPLT_Mean_Disc <- 
+  cbind(SJ_Mean_Discharge_SPLT, SAC_Mean_Discharge_SPLT[,2], DELTA_Mean_Discharge_SPLT[,2])
+head(SPLT_Mean_Disc)
+
+# SASU --------------------------------------------------------------------
+
+# Peak spawning in March and April (Moyle)
+# Going to look at how discharge in March and April influences abundance index
+# Used May and June for index
+
+# San Joaquin
+SJ_Mean_Discharge_SASU <- 
+  Discharge %>% 
+  filter(Mo %in% 3:4 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_SJ_Discharge = mean(SJR))
+SJ_Mean_Discharge_SASU
+
+## Sacramento
+SAC_Mean_Discharge_SASU <- 
+  Discharge %>% 
+  filter(Mo %in% 3:4 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_SAC_Discharge = mean(SAC))
+SAC_Mean_Discharge_SASU
+
+## Delta
+DELTA_Mean_Discharge_SASU <- 
+  Discharge %>% 
+  filter(Mo %in% 3:4 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(Mean_DELTA_Discharge = mean(OUT))
+DELTA_Mean_Discharge_SASU
+
+# Combining Data
+SASU_Mean_Disc <- 
+  cbind(SJ_Mean_Discharge_SASU, 
+        SAC_Mean_Discharge_SASU[,2], 
+        DELTA_Mean_Discharge_SASU[,2])
+head(SASU_Mean_Disc)
+
+# /// Timing of flows /// ------------------------------------------------------
+
+## Centroid
+# Looking at peak flow (PF) by julian day in each region (really this is timing of flow)
+# Formula taken from Sommer et al. 2011
+# PF = sum(Julian day * flow)/sum(flow)
+# Going to calculate PF for Jan - May because peak spawning for all species should have started by May and high flows earlier may have allowed them to reach the spawning grounds
+
+# Timing of flow by year 
+# Going to use for all 3 species
+
+# SJ
+Timing_Flow_SJR <- 
+  Discharge %>% 
+  filter(Mo %in% 1:5 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(SJ_Flow_Timing = sum(Julian_Date * SJR)/sum(SJR))
+head(Timing_Flow_SJR)
+
+Timing_Flow_Water_Year_SJR <- 
+  Discharge %>% 
+  filter(Mo %in% c(12, 1:5) & Water_Year %in% c(1995:2019)) %>% 
+  group_by(Water_Year) %>% 
+  summarise(SJ_Flow_Timing_WY = sum(Julian_Date_Final * SJR)/sum(SJR))
+head(Timing_Flow_Water_Year_SJR)
+
+# Sac
+Timing_Flow_SAC <- 
+  Discharge %>% 
+  filter(Mo %in% 1:5 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(SAC_Flow_Timing = sum(Julian_Date * SAC)/sum(SAC))
+  
+Timing_Flow_Water_Year_SAC <- 
+  Discharge %>% 
+  filter(Mo %in% c(12, 1:5) & Water_Year %in% c(1995:2019)) %>% 
+  group_by(Water_Year) %>% 
+  summarise(SAC_Flow_Timing_WY = sum(Julian_Date_Final * SAC)/sum(SAC))
+head(Timing_Flow_Water_Year_SAC)
+
+Timing_Flow_DELTA <- 
+  Discharge %>% 
+  filter(Mo %in% 1:5 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(DELTA_Flow_Timing = sum(Julian_Date * OUT)/sum(OUT))
+head(Timing_Flow_DELTA)
+
+Timing_Flow_Water_Year_DELTA <- 
+  Discharge %>% 
+  filter(Mo %in% c(12, 1:5) & Water_Year %in% c(1995:2019)) %>% 
+  group_by(Water_Year) %>% 
+  summarise(DELTA_Flow_Timing_WY = sum(Julian_Date_Final * OUT)/sum(OUT))
+head(Timing_Flow_Water_Year_DELTA)
+
+# Combining data
+Flow_Timing <- 
+  cbind(Timing_Flow_SJR, Timing_Flow_SAC[,2], Timing_Flow_DELTA[,2])
+head(Flow_Timing)
+
+Flow_Timing_WY <- 
+  cbind(Timing_Flow_Water_Year_SJR, Timing_Flow_Water_Year_SAC[,2], Timing_Flow_Water_Year_DELTA[,2])
+head(Flow_Timing_WY)
+
+# ii. Floodplain Inundation Duration ------------------------------------------
+
+# Taken from Takata 2017
+# Calculated as the number of days that mean Yolo Bypass flows met or exceeded 4000 cfs
+# This variable was a good idea but is correalted with mean discharge
+
+FP_Inudation <- 
+  Discharge %>% 
+  filter(Mo %in% 1:6 & Year %in% c(1995:2019)) %>% 
+  group_by(Year) %>% 
+  summarise(FP_Inudation = sum(YOLO > 3999))
+head(FP_Inudation)
+tail(FP_Inudation)
+
+# iii. Water Temperature -------------------------------------------------------
+# Had code to get water temp from USGS stations in first version of this script
+# There was bad coverage so I decided to use temps from seine stations instead
+
+# Going to use water temps from months that were used for indices because 
+# 1) We know fish were there 
+# 2) Temps during early life should control growth and ecosystem processes
+
+
+# SAPM --------------------------------------------------------------------
+
+head(SAPM_Index)
+
+# San Joaquin
+SAPM_SJ_WT <- 
+  SAPM_Data %>% 
+  filter(subarea %in% c(9:10), # Selecting subareas in SJ
+         Month %in% c(6:7), # Months that were used to calculate index
+         !(is.na(WaterTemperature))) %>% # Removing NAs water temp
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(WaterTemperature)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year) %>% 
+  summarise(SJ_Mean_WT = mean(Mean_WT))
+head(SAPM_SJ_WT)
+
+# Sacramento
+SAPM_SAC_WT <- 
+  SAPM_Data %>% 
+  filter(subarea %in% c(6:7), # SAC subareas (subarea 8 no longer sampled)
+         Month %in% c(6:7), # Months that were used to calculate index
+         !(is.na(WaterTemperature))) %>% # Removing NAs water temp
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(WaterTemperature)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year) %>% 
+  summarise(SAC_Mean_WT = mean(Mean_WT))
+head(SAPM_SAC_WT)
+
+# Delta
+SAPM_DELTA_WT <- 
+  SAPM_Data %>% 
+  filter(subarea %in% c(1:5), # DELTA subareas
+         Month %in% c(6:7), # Months that were used to calculate index
+         !(is.na(WaterTemperature))) %>% # Removing NAs water temp
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(WaterTemperature)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year) %>% 
+  summarise(DELTA_Mean_WT = mean(Mean_WT))
+head(SAPM_DELTA_WT)
+
+SAPM_SAC_CDist_WT <- 
+  SAPM_Index %>% 
+  filter(grepl("SR", StationCode), # Station on Sac River
+         Month %in% c(6:7), # Months that were used to calculate index
+         !(is.na(WaterTemperature))) %>% # Removing NAs water temp
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(WaterTemperature)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year) %>% 
+  summarise(SAC_CDist_Mean_WT = mean(Mean_WT))
+head(SAPM_SAC_CDist_WT)
+
+SAPM_WT <- 
+  cbind(SAPM_SJ_WT, SAPM_SAC_WT[,2], SAPM_DELTA_WT[,2], SAPM_SAC_CDist_WT[,2])
+head(SAPM_WT)
+
+# SPLT --------------------------------------------------------------------
+
+head(SPLT_Index)
+
+# San Joaquin
+SPLT_SJ_WT <- 
+  SPLT_Index %>% 
+  filter(subarea %in% c(9:10), # Selecting subareas in SJ
+         Month %in% c(5:6), # Months that were used to calculate index
+         !(is.na(WaterTemperature))) %>% # Removing NAs water temp
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(WaterTemperature)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year) %>% 
+  summarise(SJ_Mean_WT = mean(Mean_WT))
+head(SPLT_SJ_WT)
+
+# Sacramento
+SPLT_SAC_WT <- 
+  SPLT_Index %>% 
+  filter(subarea %in% c(6:7), # SAC subareas (subarea 8 no longer sampled)
+         Month %in% c(5:6), # Months that were used to calculate index
+         !(is.na(WaterTemperature))) %>% # Removing NAs water temp
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(WaterTemperature)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year) %>% 
+  summarise(SAC_Mean_WT = mean(Mean_WT))
+head(SPLT_SAC_WT)
+
+# Delta
+SPLT_DELTA_WT <- 
+  SPLT_Index %>% 
+  filter(subarea %in% c(1:5), # DELTA subareas
+         Month %in% c(5:6), # Months that were used to calculate index
+         !(is.na(WaterTemperature))) %>% # Removing NAs water temp
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(WaterTemperature)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year) %>% 
+  summarise(DELTA_Mean_WT = mean(Mean_WT))
+head(SPLT_DELTA_WT)
+
+SPLT_SAC_CDist_WT <- 
+  SPLT_Index %>% 
+  filter(grepl("SR", StationCode), # Station on Sac River
+         Month %in% c(5:6), # Months that were used to calculate index
+         !(is.na(WaterTemperature))) %>% # Removing NAs water temp
+  group_by(StationCode, Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(WaterTemperature)) %>% 
+  group_by(Year, Month, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year, subarea) %>% 
+  summarise(Mean_WT = mean(Mean_WT)) %>% 
+  group_by(Year) %>% 
+  summarise(SAC_CDist_Mean_WT = mean(Mean_WT))
+head(SPLT_SAC_CDist_WT)
+
+SPLT_WT <- 
+  cbind(SPLT_SJ_WT, SPLT_SAC_WT[,2], SPLT_DELTA_WT[,2], SPLT_SAC_CDist_WT[,2])
+head(SPLT_WT)
+
+
+# SASU --------------------------------------------------------------------
+
+# SASU index months (May/June) were the same as SPLT
+
+SASU_WT <- 
+  SPLT_WT
+head(SASU_WT)
+
+
+# iv. Final Covariate Data --------------------------------------------
+
+# SAPM --------------------------------------------------------------------
+
+SAPM_Covariates <- 
+  cbind(SAPM_Mean_Disc, Flow_Timing[,2:4], FP_Inudation[,2], SAPM_WT[,2:5])
+head(SAPM_Covariates)
+
+# Scaling covariates
+
+SAPM_Covariates_Scaled <- 
+  scale(SAPM_Covariates[,2:12])
+head(SAPM_Covariates_Scaled)  
+
+# SPLT --------------------------------------------------------------------
+
+SPLT_Covariates <- 
+  cbind(SPLT_Mean_Disc, Flow_Timing[,2:4], FP_Inudation[,2], SPLT_WT[,2:5])
+head(SPLT_Covariates)
+
+# Scaling covariates
+
+SPLT_Covariates_Scaled <- 
+  scale(SPLT_Covariates[,2:12])
+head(SPLT_Covariates_Scaled)
+
+# SASU --------------------------------------------------------------------
+
+SASU_Covariates <- 
+  cbind(SASU_Mean_Disc, Flow_Timing[,2:4], FP_Inudation[,2], SASU_WT[,2:5])
+head(SASU_Covariates)
+
+# Scaling covariates
+
+SASU_Covariates_Scaled <- 
+  scale(SASU_Covariates[,2:12])
+head(SASU_Covariates_Scaled)
+
+# ***Final Analyses ----------------------------------------------------------
+
+# i. Summary Stats ---------------------------------------------------------------
+
+# SAPM --------------------------------------------------------------------
+
+head(SAPM_Index_Final)
+
+SAPM_Index_Final_Long <- 
+  pivot_longer(SAPM_Index_Final,
+               cols = c(Delta_Index, Sac_River_Index, San_Joaquin_River_Index),
+               names_to = "Regions") %>% 
+  select(Year, Regions, value)
+head(SAPM_Index_Final_Long)
+
+SAPM_Sum_Stats <- 
+  SAPM_Index_Final_Long %>% 
+  mutate(Species = "SAPM") %>% 
+  group_by(Species, Regions) %>% 
+  summarise(Mean = mean(value), Min = min(value), Max = max(value), SD = sd(value))
+head(SAPM_Sum_Stats)
+
+# SPLT --------------------------------------------------------------------
+
+head(SPLT_Index_Final)
+
+SPLT_Index_Final_Long <- 
+  pivot_longer(SPLT_Index_Final,
+               cols = c(Delta_Index, Sac_River_Index, San_Joaquin_River_Index),
+               names_to = "Regions") %>% 
+  select(Year, Regions, value)
+head(SPLT_Index_Final_Long)
+
+SPLT_Sum_Stats <- 
+  SPLT_Index_Final_Long %>% 
+  mutate(Species = "SPLT") %>% 
+  group_by(Species, Regions) %>% 
+  summarise(Mean = mean(value), Min = min(value), Max = max(value), SD = sd(value))
+head(SPLT_Sum_Stats)
+
+# SASU --------------------------------------------------------------------
+
+head(SASU_Index_Final)
+
+SASU_Index_Final_Long <- 
+  pivot_longer(SASU_Index_Final,
+               cols = c(Delta_Index, Sac_River_Index, San_Joaquin_River_Index),
+               names_to = "Regions") %>% 
+  select(Year, Regions, value)
+head(SASU_Index_Final_Long)
+
+SASU_Sum_Stats <- 
+  SASU_Index_Final_Long %>% 
+  mutate(Species = "SASU") %>% 
+  group_by(Species, Regions) %>% 
+  summarise(Mean = mean(value), Min = min(value), Max = max(value), SD = sd(value))
+head(SASU_Sum_Stats)
+
+
+# ***Data Output*** -------------------------------------------------------------
+
+Abun_Summaries <- 
+  rbind(SAPM_Sum_Stats, SPLT_Sum_Stats, SASU_Sum_Stats)
+
+write.csv(Abun_Summaries, "Tables/Abun_Summaries.csv", row.names = FALSE)
+
+# ii. Trends ---------------------------------------------------------------
+
+# Looking for trends using MannKendall Test.
+# If there are sig trends going to run pettitt test
+
+# SAPM --------------------------------------------------------------------
+
+head(SAPM_Index_Final)
+
+# Delta Wide
+
+acf(SAPM_Index_Final$Delta_Wide_Index) # no autocorrelation
+
+MannKendall(SAPM_Index_Final$Delta_Wide_Index)
+# tau = 0.107, 2-sided pvalue = 0.46906
+# No trend
+
+# SJ
+acf(SAPM_Index_Final$San_Joaquin_River_Index) # no autocorrelation
+
+MannKendall(SAPM_Index_Final$San_Joaquin_River_Index)
+# tau = 0.186, 2-sided pvalue = 0.24378
+# No trend
+
+# Proportion of SJ to DW index
+MannKendall(SAPM_Index_Final$San_Joaquin_River_Index/SAPM_Index_Final$Delta_Wide_Index)
+# tau = 0.145, 2-sided pvalue =0.36776
+
+# Sac
+acf(SAPM_Index_Final$Sac_River_Index) # no autocorrelation
+
+MannKendall(SAPM_Index_Final$Sac_River_Index)
+# tau = 0.173, 2-sided pvalue = 0.23361
+# No trend
+
+# Proportion of SAC to DW index
+MannKendall(SAPM_Index_Final$Sac_River_Index/SAPM_Index_Final$Delta_Wide_Index)
+# tau = 0.2, 2-sided pvalue =0.16822
+
+# Delta
+acf(SAPM_Index_Final$Delta_Index) # no autocorrelation
+
+MannKendall(SAPM_Index_Final$Delta_Index)
+# tau = -0.1, 2-sided pvalue =0.49822
+# No trend
+
+# Proportion of Delta to DW index
+MannKendall(SAPM_Index_Final$Delta_Index/SAPM_Index_Final$Delta_Wide_Index)
+# tau = -0.22, 2-sided pvalue =0.129
+
+# SPLT --------------------------------------------------------------------
+
+head(SPLT_Index_Final)
+
+# Delta Wide
+
+acf(SPLT_Index_Final$Delta_Wide_Index) # no autocorrelation
+
+MannKendall(SPLT_Index_Final$Delta_Wide_Index)
+# tau = 0.0867, 2-sided pvalue =0.5593
+# No trend
+
+# SJ
+acf(SPLT_Index_Final$San_Joaquin_River_Index) # no autocorrelation
+
+MannKendall(SPLT_Index_Final$San_Joaquin_River_Index)
+# tau = -0.0533, 2-sided pvalue = 0.7261
+# No trend
+
+# Proportion of SJ to DW index
+MannKendall(SPLT_Index_Final$San_Joaquin_River_Index/SPLT_Index_Final$Delta_Wide_Index)
+# tau = -0.113, 2-sided pvalue =0.44088
+
+# Sac
+acf(SPLT_Index_Final$Sac_River_Index) # no autocorrelation
+
+MannKendall(SPLT_Index_Final$Sac_River_Index)
+# tau = 0.327, 2-sided pvalue = 0.023486
+# Positive trend
+
+pettitt.test(SPLT_Index_Final$Sac_River_Index)
+# U* = 82, p-value = 0.167; no change point
+
+# Proportion of SAC to DW index
+MannKendall(SPLT_Index_Final$Sac_River_Index/SPLT_Index_Final$Delta_Wide_Index)
+# tau = 0.2, 2-sided pvalue =0.16822
+
+# Delta
+acf(SPLT_Index_Final$Delta_Index) # no autocorrelation
+
+MannKendall(SPLT_Index_Final$Delta_Index)
+# tau = 0.0667, 2-sided pvalue = 0.65723
+# No trend
+
+# Proportion of DELTA to DW index
+MannKendall(SPLT_Index_Final$Delta_Index/SPLT_Index_Final$Delta_Wide_Index)
+# tau = 0.00667, 2-sided pvalue =0.98137
+
+# SASU --------------------------------------------------------------------
+
+head(SASU_Index_Final)
+
+# Delta Wide
+
+acf(SASU_Index_Final$Delta_Wide_Index) # no autocorrelation
+
+MannKendall(SASU_Index_Final$Delta_Wide_Index)
+# tau = 0.533, 2-sided pvalue =0.00020444
+# Positive trend
+
+pettitt.test(SASU_Index_Final$Delta_Wide_Index)
+# U* = 144, p-value = 0.000946; Sig
+# Change point at time 12
+
+# SJ
+acf(SASU_Index_Final$San_Joaquin_River_Index) # no autocorrelation
+
+MannKendall(SASU_Index_Final$San_Joaquin_River_Index)
+# tau = 0.113, 2-sided pvalue = 0.44088
+# No trend
+
+# Proportion of SJ to DW index
+MannKendall(SASU_Index_Final$San_Joaquin_River_Index/SASU_Index_Final$Delta_Wide_Index)
+# tau = -0.253, 2-sided pvalue =0.079839
+
+# Sac
+acf(SASU_Index_Final$Sac_River_Index) # no autocorrelation
+
+MannKendall(SASU_Index_Final$Sac_River_Index)
+# tau = 0.44, 2-sided pvalue = 0.0022171
+# Positive trend
+
+pettitt.test(SASU_Index_Final$Sac_River_Index)
+# U* = 132, p-value = 0.003214
+# Change point at time 12
+
+# Proportion of SAC to DW index
+MannKendall(SASU_Index_Final$Sac_River_Index/SASU_Index_Final$Delta_Wide_Index)
+# tau = 0.14, 2-sided pvalue =0.33829
+
+# Delta
+acf(SASU_Index_Final$Delta_Index) # no autocorrelation
+
+MannKendall(SASU_Index_Final$Delta_Index)
+# tau = 0.513, 2-sided pvalue = 0.0003525
+# Positive trend
+
+pettitt.test(SASU_Index_Final$Delta_Index)
+# U* = 132, p-value = 0.003214
+# Change point at time 10
+
+# Proportion of DELTA to DW index
+MannKendall(SASU_Index_Final$Delta_Index/SASU_Index_Final$Delta_Wide_Index)
+# tau = 0.0533, 2-sided pvalue =0.7261
+
+# iii. Regression Analyses -----------------------------------------------------
+
+
+# ***** PCA ***** -------------------------------------------------------------
+
+# Because IEP gets critisim for only using flow and water temp is correlated with flow I am going to use PCA to get uncor. covariates.
+
+# SAPM --------------------------------------------------------------------
+
+# Final index data
+head(SAPM_Index_Final)
+
+# Final scaled covariate data
+head(SAPM_Covariates_Scaled)
+cor(SAPM_Covariates_Scaled)
+
+SAPM_Model_Data <- 
+  cbind(SAPM_Index_Final[,11:14], SAPM_Covariates_Scaled)
+head(SAPM_Model_Data)
+
+# a. PCA ------------------------------------------------------------------
+# Converting DF to Matrix for PCA
+
+# Sac Data
+SAPM_Model_Data_SAC_Mat <- 
+  SAPM_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, SAC_Mean_WT) %>% 
+  as.matrix()
+head(SAPM_Model_Data_SAC_Mat)
+
+SAPM_SAC_PCA <- 
+  psych::principal(SAPM_Model_Data_SAC_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SAPM_SAC_PCA
+
+# Loadings
+SAPM_SAC_PCA_Loadings_1 <- 
+  SAPM_SAC_PCA$loadings
+
+SAPM_SAC_PCA_Loadings <- 
+  round(SAPM_SAC_PCA_Loadings_1[,], 2)
+SAPM_SAC_PCA_Loadings
+
+# Scores
+SAPM_SAC_PC_Scores <- 
+  as.data.frame(SAPM_SAC_PCA$scores)
+colnames(SAPM_SAC_PC_Scores) <- 
+  c("SAC_RC3", "SAC_RC2", "SAC_RC1")
+SAPM_SAC_PC_Scores
+
+# SJ -> no score because we are not fitting a model for this region
+
+# Delta
+#  They don't spawn in the Delta so using sac flows 
+SAPM_Model_Data_DELTA_Mat <- 
+  SAPM_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, DELTA_Mean_WT) %>% 
+  as.matrix()
+head(SAPM_Model_Data_DELTA_Mat)
+
+SAPM_DELTA_PCA <- 
+  psych::principal(SAPM_Model_Data_DELTA_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SAPM_DELTA_PCA
+
+# Loadings
+SAPM_DELTA_PCA_Loadings_1 <- 
+  SAPM_DELTA_PCA$loadings
+
+SAPM_DELTA_PCA_Loadings <- 
+  round(SAPM_DELTA_PCA_Loadings_1[,], 2)
+SAPM_DELTA_PCA_Loadings
+
+# Getting scores
+SAPM_DELTA_PC_Scores <- 
+  as.data.frame(SAPM_DELTA_PCA$scores)
+colnames(SAPM_DELTA_PC_Scores) <- 
+  c("DELTA_RC2", "DELTA_RC3", "DELTA_RC1")
+SAPM_DELTA_PC_Scores
+
+# b. CDist PCA ---------------------------------------------------------------
+
+# CDist Data
+SAPM_Model_Data_CDist_Mat <- 
+  SAPM_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, SAC_CDist_Mean_WT) %>% 
+  as.matrix()
+head(SAPM_Model_Data_CDist_Mat)
+
+# PCs
+SAPM_CDist_PCA <- 
+  psych::principal(SAPM_Model_Data_CDist_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SAPM_CDist_PCA
+
+# Loadings
+SAPM_CDist_PCA_Loadings_1 <- 
+  SAPM_CDist_PCA$loadings
+
+SAPM_CDist_PCA_Loadings <- 
+  round(SAPM_CDist_PCA_Loadings_1[,], 2)
+SAPM_CDist_PCA_Loadings
+
+# Scores
+SAPM_CDist_PC_Scores <- 
+  as.data.frame(SAPM_CDist_PCA$scores)
+colnames(SAPM_CDist_PC_Scores) <- 
+  c("CDist_RC3", "CDist_RC2", "CDist_RC1")
+SAPM_CDist_PC_Scores
+
+# c. Final covariate data -------------------------------------------------
+
+SAPM_Model_Data_Final <- 
+  SAPM_Model_Data %>% 
+  select(Delta_Index, 
+         Sac_River_Index, 
+         Delta_Wide_Index) %>% 
+  bind_cols(SAPM_CDist[,2],
+            SAPM_SAC_PC_Scores, 
+            SAPM_DELTA_PC_Scores,
+            SAPM_CDist_PC_Scores)
+head(SAPM_Model_Data_Final)
+
+
+# SPLT --------------------------------------------------------------------
+
+# Final index data
+head(SPLT_Index_Final)
+
+# Final scaled covariate data
+head(SPLT_Covariates_Scaled)
+cor(SPLT_Covariates_Scaled)
+
+SPLT_Model_Data <- 
+  cbind(SPLT_Index_Final[,11:14], SPLT_Covariates_Scaled)
+head(SPLT_Model_Data)
+
+
+# a. PCA ------------------------------------------------------------------
+
+# Converting DF to Matrix for PCA
+
+# Sac Data
+SPLT_Model_Data_SAC_Mat <- 
+  SPLT_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, SAC_Mean_WT) %>% 
+  as.matrix()
+head(SPLT_Model_Data_SAC_Mat)
+
+# PCs
+SPLT_SAC_PCA <- 
+  psych::principal(SPLT_Model_Data_SAC_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SPLT_SAC_PCA
+
+# Loadings
+SPLT_SAC_PCA_Loadings_1 <- 
+  SPLT_SAC_PCA$loadings
+
+SPLT_SAC_PCA_Loadings <- 
+  round(SPLT_SAC_PCA_Loadings_1[,], 2)
+SPLT_SAC_PCA_Loadings
+
+# Scores
+SPLT_SAC_PC_Scores <- 
+  as.data.frame(SPLT_SAC_PCA$scores)
+colnames(SPLT_SAC_PC_Scores) <- 
+  c("SAC_RC3", "SAC_RC2", "SAC_RC1")
+SPLT_SAC_PC_Scores
+
+# SJ Data
+SPLT_Model_Data_SJ_Mat <- 
+  SPLT_Model_Data %>% 
+  select(Mean_SJ_Discharge, SJ_Flow_Timing, SJ_Mean_WT) %>% 
+  as.matrix()
+head(SPLT_Model_Data_SJ_Mat)
+
+# PCs
+SPLT_SJ_PCA <- 
+  psych::principal(SPLT_Model_Data_SJ_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+
+# Loadings
+SPLT_SJ_PCA_Loadings_1 <- 
+  SPLT_SJ_PCA$loadings
+
+SPLT_SJ_PCA_Loadings <- 
+  round(SPLT_SJ_PCA_Loadings_1[,], 2)
+SPLT_SJ_PCA_Loadings
+
+SPLT_SJ_PC_Scores <- 
+  as.data.frame(SPLT_SJ_PCA$scores)
+colnames(SPLT_SJ_PC_Scores) <- 
+  c("SJ_RC3", "SJ_RC2", "SJ_RC1")
+SPLT_SJ_PC_Scores
+
+# Delta
+#  They don't spawn in the Delta so using sac flows 
+SPLT_Model_Data_DELTA_Mat <- 
+  SPLT_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, DELTA_Mean_WT) %>% 
+  as.matrix()
+head(SPLT_Model_Data_DELTA_Mat)
+
+SPLT_DELTA_PCA <- 
+  psych::principal(SPLT_Model_Data_DELTA_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SPLT_DELTA_PCA
+
+# Loadings
+SPLT_DELTA_PCA_Loadings_1 <- 
+  SPLT_DELTA_PCA$loadings
+
+SPLT_DELTA_PCA_Loadings <- 
+  round(SPLT_DELTA_PCA_Loadings_1[,], 2)
+SPLT_DELTA_PCA_Loadings
+
+# Getting scores
+SPLT_DELTA_PC_Scores <- 
+  as.data.frame(SPLT_DELTA_PCA$scores)
+colnames(SPLT_DELTA_PC_Scores) <- 
+  c("DELTA_RC2", "DELTA_RC3", "DELTA_RC1")
+SPLT_DELTA_PC_Scores
+
+
+# b. CDist PCA ---------------------------------------------------------------
+
+# CDist Data
+SPLT_Model_Data_CDist_Mat <- 
+  SPLT_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, SAC_CDist_Mean_WT) %>% 
+  as.matrix()
+head(SPLT_Model_Data_CDist_Mat)
+
+# PCs
+SPLT_CDist_PCA <- 
+  psych::principal(SPLT_Model_Data_CDist_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SPLT_CDist_PCA
+
+# Loadings
+SPLT_CDist_PCA_Loadings_1 <- 
+  SPLT_CDist_PCA$loadings
+
+SPLT_CDist_PCA_Loadings <- 
+  round(SPLT_CDist_PCA_Loadings_1[,], 2)
+SPLT_CDist_PCA_Loadings
+
+# Scores
+SPLT_CDist_PC_Scores <- 
+  as.data.frame(SPLT_CDist_PCA$scores)
+colnames(SPLT_CDist_PC_Scores) <- 
+  c("CDist_RC2", "CDist_RC3", "CDist_RC1")
+SPLT_CDist_PC_Scores
+
+# c. Final covariate data -------------------------------------------------
+
+SPLT_Model_Data_Final <- 
+  SPLT_Model_Data %>% 
+  select(Delta_Index, 
+         Sac_River_Index, 
+         San_Joaquin_River_Index,
+         Delta_Wide_Index) %>% 
+  bind_cols(SPLT_CDist[,2],
+            SPLT_SAC_PC_Scores, 
+            SPLT_SJ_PC_Scores,
+            SPLT_DELTA_PC_Scores,
+            SPLT_CDist_PC_Scores)
+head(SPLT_Model_Data_Final)
+
+# SASU --------------------------------------------------------------------
+
+# Final index data
+head(SASU_Index_Final)
+
+# Final scaled covariate data
+head(SASU_Covariates_Scaled)
+cor(SASU_Covariates_Scaled)
+
+SASU_Model_Data <- 
+  cbind(SASU_Index_Final[,11:14], SASU_Covariates_Scaled)
+head(SASU_Model_Data)
+
+# a. PCA ------------------------------------------------------------------
+
+# Converting DF to Matrix for PCA
+
+# Sac Data
+SASU_Model_Data_SAC_Mat <- 
+  SASU_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, SAC_Mean_WT) %>% 
+  as.matrix()
+head(SASU_Model_Data_SAC_Mat)
+
+# PCs
+SASU_SAC_PCA <- 
+  psych::principal(SASU_Model_Data_SAC_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SASU_SAC_PCA
+
+# Loadings
+SASU_SAC_PCA_Loadings_1 <- 
+  SASU_SAC_PCA$loadings
+
+SASU_SAC_PCA_Loadings <- 
+  round(SASU_SAC_PCA_Loadings_1[,], 2)
+SASU_SAC_PCA_Loadings
+
+# Scores
+SASU_SAC_PC_Scores <- 
+  as.data.frame(SASU_SAC_PCA$scores)
+colnames(SASU_SAC_PC_Scores) <- 
+  c("SAC_RC3", "SAC_RC2", "SAC_RC1")
+SASU_SAC_PC_Scores
+
+
+# SJ Data
+SASU_Model_Data_SJ_Mat <- 
+  SASU_Model_Data %>% 
+  select(Mean_SJ_Discharge, SJ_Flow_Timing, SJ_Mean_WT) %>% 
+  as.matrix()
+head(SASU_Model_Data_SJ_Mat)
+
+# PCs
+SASU_SJ_PCA <- 
+  psych::principal(SASU_Model_Data_SJ_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SASU_SJ_PCA
+
+# Loadings
+SASU_SJ_PCA_Loadings_1 <- 
+  SASU_SJ_PCA$loadings
+
+SASU_SJ_PCA_Loadings <- 
+  round(SASU_SJ_PCA_Loadings_1[,], 2)
+SASU_SJ_PCA_Loadings
+
+# Scores
+SASU_SJ_PC_Scores <- 
+  as.data.frame(SASU_SJ_PCA$scores)
+colnames(SASU_SJ_PC_Scores) <- 
+  c("SJ_RC3", "SJ_RC2", "SJ_RC1")
+SASU_SJ_PC_Scores
+
+# Delta
+#  They don't spawn in the Delta so using sac flows 
+SASU_Model_Data_DELTA_Mat <- 
+  SASU_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, DELTA_Mean_WT) %>% 
+  as.matrix()
+head(SASU_Model_Data_DELTA_Mat)
+
+SASU_DELTA_PCA <- 
+  psych::principal(SASU_Model_Data_DELTA_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SASU_DELTA_PCA
+
+# Loadings
+SASU_DELTA_PCA_Loadings_1 <- 
+  SASU_DELTA_PCA$loadings
+
+SASU_DELTA_PCA_Loadings <- 
+  round(SASU_DELTA_PCA_Loadings_1[,], 2)
+SASU_DELTA_PCA_Loadings
+
+# Getting scores
+SASU_DELTA_PC_Scores <- 
+  as.data.frame(SASU_DELTA_PCA$scores)
+colnames(SASU_DELTA_PC_Scores) <- 
+  c("DELTA_RC2", "DELTA_RC3", "DELTA_RC1")
+SASU_DELTA_PC_Scores
+
+# b. CDist PCA ---------------------------------------------------------------
+
+# CDist Data
+SASU_Model_Data_CDist_Mat <- 
+  SASU_Model_Data %>% 
+  select(Mean_SAC_Discharge, SAC_Flow_Timing, SAC_CDist_Mean_WT) %>% 
+  as.matrix()
+head(SASU_Model_Data_CDist_Mat)
+
+# PCs
+SASU_CDist_PCA <- 
+  psych::principal(SASU_Model_Data_CDist_Mat, 
+                   nfactors = 3, 
+                   rotate = "varimax")
+SASU_CDist_PCA
+
+# Loadings
+SASU_CDist_PCA_Loadings_1 <- 
+  SASU_CDist_PCA$loadings
+
+SASU_CDist_PCA_Loadings <- 
+  round(SASU_CDist_PCA_Loadings_1[,], 2)
+SASU_CDist_PCA_Loadings
+
+# Scores
+SASU_CDist_PC_Scores <- 
+  as.data.frame(SASU_CDist_PCA$scores)
+colnames(SASU_CDist_PC_Scores) <- 
+  c("CDist_RC2", "CDist_RC3", "CDist_RC1")
+SASU_CDist_PC_Scores
+
+# c. Final covariate data -------------------------------------------------
+
+SASU_Model_Data_Final <- 
+  SASU_Model_Data %>% 
+  select(Delta_Index, 
+         Sac_River_Index, 
+         San_Joaquin_River_Index,
+         Delta_Wide_Index) %>% 
+  bind_cols(SASU_CDist[,2],
+            SASU_SAC_PC_Scores, 
+            SASU_SJ_PC_Scores,
+            SASU_DELTA_PC_Scores,
+            SASU_CDist_PC_Scores)
+head(SASU_Model_Data_Final)
+
+# iv. Abundance Models --------------------------------------------------------
+
+# All subset selection that examine the influence of Water temp, mean flow during spawning, and timing of flow on age-0 abundance
+
+# SAPM --------------------------------------------------------------------
+
+head(SAPM_Model_Data_Final)
+
+
+# 1) Delta-Wide Models ----------------------------------------------------
+
+pairs(SAPM_Model_Data_Final[,c(3,5:7)], pch = 16)
+# Best relationship with RC2...but slightly non-linear
+
+# Delta-Wide Index
+SAPM_DW_Global_lm <- 
+  lm(log(Delta_Wide_Index) ~ SAC_RC1 + SAC_RC2 + SAC_RC3, 
+     data = SAPM_Model_Data_Final, na.action = "na.fail")
+summary(SAPM_DW_Global_lm)
+# RC2 (timing of flow) is important
+
+# Model assumptions
+plot(SAPM_DW_Global_lm) # Assumptions look fine
+acf(SAPM_SAC_Global_lm$residuals) # No Autocorreltion
+vif(SAPM_SAC_Global_lm) # PCs are unclorrelated
+
+## All subset selection
+SAPM_DW_Global_Dredge <- 
+  dredge(SAPM_DW_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SAPM_DW_Global_Dredge
+# Top models include Flow timing (RC2)
+
+importance(SAPM_DW_Global_Dredge)
+
+### Getting model output and weights
+SAPM_DW_Dredge_Output <- 
+  as.data.frame(cbind(SAPM_DW_Global_Dredge$`(Intercept)`, 
+                      SAPM_DW_Global_Dredge$SAC_RC1, 
+                      SAPM_DW_Global_Dredge$SAC_RC2,
+                      SAPM_DW_Global_Dredge$SAC_RC3,
+                      SAPM_DW_Global_Dredge$df,
+                      round(SAPM_DW_Global_Dredge$`R^2`, 2),
+                      round(SAPM_DW_Global_Dredge$`*.adjRsq`, 2),
+                      round(SAPM_DW_Global_Dredge$logLik, 2), 
+                      round(SAPM_DW_Global_Dredge$AICc, 2),
+                      round(SAPM_DW_Global_Dredge$delta, 2), 
+                      SAPM_DW_Global_Dredge$weight)) %>% 
+  mutate(Species = "SAPM", Region = "DW")
+colnames(SAPM_DW_Dredge_Output) = c("Intercept", "SAC_RC1", "SAC_RC2", "SAC_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SAPM_DW_Dredge_Output
+
+SAPM_DW_RC2_Weights <- 
+  SAPM_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "DW", Variable = "SAC_RC2")
+
+SAPM_DW_RC3_Weights <- 
+  SAPM_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "DW", Variable = "SAC_RC3")
+
+SAPM_DW_Weights <- 
+  SAPM_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "DW", Variable = "SAC_RC1") %>% 
+  bind_rows(SAPM_DW_RC2_Weights, SAPM_DW_RC3_Weights)
+SAPM_DW_Weights
+
+
+### Getting model averaged coefficients for the multiple regression figures below
+# Going to get a 95% confidence set
+SAPM_DW_MA = model.avg(SAPM_DW_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .95, 
+                       rank = "AIC")
+SAPM_DW_MA_Sum = summary(SAPM_DW_MA)
+SAPM_DW_MA_Full_Out = SAPM_DW_MA_Sum$coefmat.full
+SAPM_DW_MA_Full_Out
+
+# SJ
+# Zero inflated data. Not appropriate to use multiple regression
+
+# 2) SAC Models ----------------------------------------------------
+
+pairs(SAPM_Model_Data_Final[,c(2,5:7)], pch = 16)
+# Best relationship with RC2...but slightly non-linear
+
+# Global model for all subset selection
+SAPM_SAC_Global_lm <- 
+  lm(log(Sac_River_Index) ~ SAC_RC3 + SAC_RC2 + SAC_RC1, 
+     data = SAPM_Model_Data_Final, na.action = "na.fail")
+summary(SAPM_SAC_Global_lm)
+
+# Model assumptions
+plot(SAPM_SAC_Global_lm) # Assumptions look fine
+acf(SAPM_SAC_Global_lm$residuals) # No Autocorreltion
+vif(SAPM_SAC_Global_lm) # PCs are uncor.
+
+## All subset selection
+SAPM_SAC_Global_Dredge <- 
+  dredge(SAPM_SAC_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SAPM_SAC_Global_Dredge
+# Top models include Flow timing
+
+importance(SAPM_SAC_Global_Dredge)
+# Flow timing is most important variable; weights = 0.86
+
+### Getting model output and weights
+SAPM_SAC_Dredge_Output <- 
+  as.data.frame(cbind(SAPM_SAC_Global_Dredge$`(Intercept)`, 
+                      SAPM_SAC_Global_Dredge$SAC_RC1, 
+                      SAPM_SAC_Global_Dredge$SAC_RC2,
+                      SAPM_SAC_Global_Dredge$SAC_RC3,
+                      SAPM_SAC_Global_Dredge$df,
+                      round(SAPM_SAC_Global_Dredge$`R^2`, 2),
+                      round(SAPM_SAC_Global_Dredge$`*.adjRsq`, 2),
+                      round(SAPM_SAC_Global_Dredge$logLik, 2), 
+                      round(SAPM_SAC_Global_Dredge$AICc, 2),
+                      round(SAPM_SAC_Global_Dredge$delta, 2), 
+                      SAPM_SAC_Global_Dredge$weight)) %>% 
+  mutate(Species = "SAPM", Region = "SAC")
+colnames(SAPM_SAC_Dredge_Output) = c("Intercept", "SAC_RC1", "SAC_RC2", "SAC_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SAPM_SAC_Dredge_Output
+
+SAPM_SAC_RC2_Weights <- 
+  SAPM_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "SAC", Variable = "SAC_RC2")
+
+SAPM_SAC_RC3_Weights <- 
+  SAPM_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "SAC", Variable = "SAC_RC3")
+
+SAPM_SAC_Weights <- 
+  SAPM_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "SAC", Variable = "SAC_RC1") %>% 
+  bind_rows(SAPM_SAC_RC2_Weights, SAPM_SAC_RC3_Weights)
+SAPM_SAC_Weights
+
+# Getting model averaged coefficients for the multiple regression figures below
+SAPM_SAC_MA = model.avg(SAPM_SAC_Global_Dredge, 
+                        revised.var = TRUE,
+                        cumsum(weight) <= .95, 
+                        rank = "AIC")
+SAPM_SAC_MA_Sum = summary(SAPM_SAC_MA)
+SAPM_SAC_MA_Full_Out = SAPM_SAC_MA_Sum$coefmat.full
+SAPM_SAC_MA_Full_Out
+
+# 3) Delta Models ----------------------------------------------------
+
+pairs(SAPM_Model_Data_Final[,c(1,8:10)], pch = 16)
+# Best relationship with RC2...but there's an outlier
+
+# Global model for all subset selection
+SAPM_Delta_Global_lm <- 
+  lm(log(Delta_Index) ~ DELTA_RC3 + DELTA_RC2 + DELTA_RC1, 
+     data = SAPM_Model_Data_Final, na.action = "na.fail")
+summary(SAPM_Delta_Global_lm)
+# RC3 and RC2 important and R2adj = 0.36
+# Seems like there is an outlier for the  model that uses the DELTA PCA covariates
+# Stronger relationship with Sac variables R2adj = 0.46
+
+# Model assumptions
+plot(SAPM_Delta_Global_lm) # Assumptions look fine
+acf(SAPM_Delta_Global_lm$residuals) # No Autocorreltion
+vif(SAPM_Delta_Global_lm) # All < 2
+
+## All subset selection
+SAPM_DELTA_Global_Dredge <- 
+  dredge(SAPM_Delta_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SAPM_DELTA_Global_Dredge
+
+# Top models include Water temp and Flow timing
+importance(SAPM_DELTA_Global_Dredge)
+# Flow timing is also important weights = 0.69
+
+### Getting model output and weights
+SAPM_DELTA_Dredge_Output <- 
+  as.data.frame(cbind(SAPM_DELTA_Global_Dredge$`(Intercept)`, 
+                      SAPM_DELTA_Global_Dredge$DELTA_RC1, 
+                      SAPM_DELTA_Global_Dredge$DELTA_RC2,
+                      SAPM_DELTA_Global_Dredge$DELTA_RC3,
+                      SAPM_DELTA_Global_Dredge$df,
+                      round(SAPM_DELTA_Global_Dredge$`R^2`, 2),
+                      round(SAPM_DELTA_Global_Dredge$`*.adjRsq`, 2),
+                      round(SAPM_DELTA_Global_Dredge$logLik, 2), 
+                      round(SAPM_DELTA_Global_Dredge$AICc, 2),
+                      round(SAPM_DELTA_Global_Dredge$delta, 2), 
+                      SAPM_DELTA_Global_Dredge$weight)) %>% 
+  mutate(Species = "SAPM", Region = "DELTA")
+colnames(SAPM_DELTA_Dredge_Output) = c("Intercept", "DELTA_RC1", "DELTA_RC2", 
+                                       "DELTA_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SAPM_DELTA_Dredge_Output
+
+SAPM_DELTA_RC2_Weights <- 
+  SAPM_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "DELTA", Variable = "DELTA_RC2")
+
+SAPM_DELTA_RC3_Weights <- 
+  SAPM_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "DELTA", Variable = "DELTA_RC3")
+
+SAPM_DELTA_Weights <- 
+  SAPM_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "DELTA", Variable = "DELTA_RC1") %>% 
+  bind_rows(SAPM_DELTA_RC2_Weights, SAPM_DELTA_RC3_Weights)
+SAPM_DELTA_Weights
+
+
+# Getting model averaged coefficients for the multiple regression figures below
+SAPM_DELTA_MA = model.avg(SAPM_DELTA_Global_Dredge, 
+                          revised.var = TRUE,
+                          cumsum(weight) <= .95, 
+                          rank = "AIC")
+SAPM_DELTA_MA_Sum = summary(SAPM_DELTA_MA)
+SAPM_DELTA_MA_Full_Out = SAPM_DELTA_MA_Sum$coefmat.full
+SAPM_DELTA_MA_Full_Out
+
+# SPLT --------------------------------------------------------------------
+
+# Final data for models
+head(SPLT_Model_Data_Final)
+
+# 1) Delta-Wide Models ----------------------------------------------------
+
+pairs(SPLT_Model_Data_Final[,c(4,6:8)], pch = 16)
+
+# Delta-Wide Index
+SPLT_DW_Global_lm <- 
+  lm(log(Delta_Wide_Index) ~ SAC_RC3 + SAC_RC2 + SAC_RC1, 
+     data = SPLT_Model_Data_Final, na.action = "na.fail")
+summary(SPLT_DW_Global_lm)
+
+# Model assumptions
+plot(SPLT_DW_Global_lm) # Assumptions look fine
+acf(SPLT_DW_Global_lm$residuals) # No Autocorreltion
+vif(SPLT_DW_Global_lm) # All < 2
+
+## All subset selection
+SPLT_DW_Global_Dredge <- 
+  dredge(SPLT_DW_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SPLT_DW_Global_Dredge
+# Top models include Flow timing
+
+importance(SPLT_DW_Global_Dredge)
+# Mean is most important variable; weights = 1
+
+### Getting model output and weights
+SPLT_DW_Dredge_Output <- 
+  as.data.frame(cbind(SPLT_DW_Global_Dredge$`(Intercept)`, 
+                      SPLT_DW_Global_Dredge$SAC_RC1, 
+                      SPLT_DW_Global_Dredge$SAC_RC2,
+                      SPLT_DW_Global_Dredge$SAC_RC3,
+                      SPLT_DW_Global_Dredge$df,
+                      round(SPLT_DW_Global_Dredge$`R^2`, 2),
+                      round(SPLT_DW_Global_Dredge$`*.adjRsq`, 2),
+                      round(SPLT_DW_Global_Dredge$logLik, 2), 
+                      round(SPLT_DW_Global_Dredge$AICc, 2),
+                      round(SPLT_DW_Global_Dredge$delta, 2), 
+                      SPLT_DW_Global_Dredge$weight)) %>% 
+  mutate(Species = "SPLT", Region = "DW")
+colnames(SPLT_DW_Dredge_Output) = c("Intercept", "SAC_RC1", "SAC_RC2", "SAC_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SPLT_DW_Dredge_Output
+
+SPLT_DW_RC2_Weights <- 
+  SPLT_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "DW", Variable = "SAC_RC2")
+
+SPLT_DW_RC3_Weights <- 
+  SPLT_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "DW", Variable = "SAC_RC3")
+
+SPLT_DW_Weights <- 
+  SPLT_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "DW", Variable = "SAC_RC1") %>% 
+  bind_rows(SPLT_DW_RC2_Weights, SPLT_DW_RC3_Weights)
+SPLT_DW_Weights
+
+# Getting model averaged coefficients for the multiple regression figures below
+SPLT_DW_MA = model.avg(SPLT_DW_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .95, 
+                       rank = "AIC")
+SPLT_DW_MA_Sum = summary(SPLT_DW_MA)
+SPLT_DW_MA_Full_Out = SPLT_DW_MA_Sum$coefmat.full
+SPLT_DW_MA_Full_Out
+
+# 2) SJ Models ----------------------------------------------------
+
+pairs(SPLT_Model_Data_Final[,c(3,9:11)], pch = 16)
+
+# Global model for all subset selection
+SPLT_SJ_Global_lm <- 
+  lm(log(San_Joaquin_River_Index) ~ SJ_RC1 + SJ_RC2 + SJ_RC3, 
+     data = SPLT_Model_Data_Final, na.action = "na.fail")
+summary(SPLT_SJ_Global_lm)
+
+# Model assumptions
+plot(SPLT_SJ_Global_lm) # Assumptions look fine
+acf(SPLT_SJ_Global_lm$residuals) # Slight Autocorreltion at lag 3
+vif(SPLT_SJ_Global_lm) # All < 2
+
+## All subset selection
+SPLT_SJ_Global_Dredge <- 
+  dredge(SPLT_SJ_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SPLT_SJ_Global_Dredge
+# Top models include Mean flow
+
+importance(SPLT_SJ_Global_Dredge)
+# Mean flow is most important variable; weights = 1.0
+# Flow timing also important; weights = 0.77
+
+### Getting model output and weights
+SPLT_SJ_Dredge_Output <- 
+  as.data.frame(cbind(SPLT_SJ_Global_Dredge$`(Intercept)`, 
+                      SPLT_SJ_Global_Dredge$SJ_RC1, 
+                      SPLT_SJ_Global_Dredge$SJ_RC2,
+                      SPLT_SJ_Global_Dredge$SJ_RC3,
+                      SPLT_SJ_Global_Dredge$df,
+                      round(SPLT_SJ_Global_Dredge$`R^2`, 2),
+                      round(SPLT_SJ_Global_Dredge$`*.adjRsq`, 2),
+                      round(SPLT_SJ_Global_Dredge$logLik, 2), 
+                      round(SPLT_SJ_Global_Dredge$AICc, 2),
+                      round(SPLT_SJ_Global_Dredge$delta, 2), 
+                      SPLT_SJ_Global_Dredge$weight)) %>% 
+  mutate(Species = "SPLT", Region = "SJ")
+colnames(SPLT_SJ_Dredge_Output) = c("Intercept", "SJ_RC1", "SJ_RC2", "SJ_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SPLT_SJ_Dredge_Output
+
+SPLT_SJ_RC2_Weights <- 
+  SPLT_SJ_Dredge_Output %>% 
+  filter(!(is.na(SJ_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "SJ", Variable = "SJ_RC2")
+
+SPLT_SJ_RC3_Weights <- 
+  SPLT_SJ_Dredge_Output %>% 
+  filter(!(is.na(SJ_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "SJ", Variable = "SJ_RC3")
+
+SPLT_SJ_Weights <- 
+  SPLT_SJ_Dredge_Output %>% 
+  filter(!(is.na(SJ_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "SJ", Variable = "SJ_RC1") %>% 
+  bind_rows(SPLT_SJ_RC2_Weights, SPLT_SJ_RC3_Weights)
+SPLT_SJ_Weights
+
+# Getting model averaged coefficients for the multiple regression figures below
+SPLT_SJ_MA = model.avg(SPLT_SJ_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .99, # 99 OW only one model and doesn't work
+                       rank = "AIC")
+SPLT_SJ_MA_Sum = summary(SPLT_SJ_MA)
+SPLT_SJ_MA_Full_Out = SPLT_SJ_MA_Sum$coefmat.full
+SPLT_SJ_MA_Full_Out
+
+# 3) SAC Models ----------------------------------------------------
+
+pairs(SPLT_Model_Data_Final[,c(2,6:8)], pch = 16)
+
+# Global model for all subset selection
+SPLT_SAC_Global_lm <- 
+  lm(log(Sac_River_Index) ~ SAC_RC3 + SAC_RC2 + SAC_RC1, 
+     data = SPLT_Model_Data_Final, 
+     na.action = "na.fail")
+summary(SPLT_SAC_Global_lm)
+
+# Model assumptions
+plot(SPLT_SAC_Global_lm) # Assumptions look fine (normality is questionable)
+acf(SPLT_SAC_Global_lm$residuals) # No Autocorreltion
+vif(SPLT_SAC_Global_lm) # All < 2
+
+## All subset selection
+SPLT_SAC_Global_Dredge <- 
+  dredge(SPLT_SAC_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SPLT_SAC_Global_Dredge
+# Top models is null model
+
+importance(SPLT_SAC_Global_Dredge)
+# No important variables
+
+### Getting model output and weights
+SPLT_SAC_Dredge_Output <- 
+  as.data.frame(cbind(SPLT_SAC_Global_Dredge$`(Intercept)`, 
+                      SPLT_SAC_Global_Dredge$SAC_RC1, 
+                      SPLT_SAC_Global_Dredge$SAC_RC2,
+                      SPLT_SAC_Global_Dredge$SAC_RC3,
+                      SPLT_SAC_Global_Dredge$df,
+                      round(SPLT_SAC_Global_Dredge$`R^2`, 2),
+                      round(SPLT_SAC_Global_Dredge$`*.adjRsq`, 2),
+                      round(SPLT_SAC_Global_Dredge$logLik, 2), 
+                      round(SPLT_SAC_Global_Dredge$AICc, 2),
+                      round(SPLT_SAC_Global_Dredge$delta, 2), 
+                      SPLT_SAC_Global_Dredge$weight)) %>% 
+  mutate(Species = "SPLT", Region = "SAC")
+colnames(SPLT_SAC_Dredge_Output) = c("Intercept", "SAC_RC1", "SAC_RC2", "SAC_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SPLT_SAC_Dredge_Output
+
+SPLT_SAC_RC2_Weights <- 
+  SPLT_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "SAC", Variable = "SAC_RC2")
+
+SPLT_SAC_RC3_Weights <- 
+  SPLT_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "SAC", Variable = "SAC_RC3")
+
+SPLT_SAC_Weights <- 
+  SPLT_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "SAC", Variable = "SAC_RC1") %>% 
+  bind_rows(SPLT_SAC_RC2_Weights, SPLT_SAC_RC3_Weights)
+SPLT_SAC_Weights
+
+
+# Getting model averaged coefficients for the multiple regression figures below
+SPLT_SAC_MA = model.avg(SPLT_SAC_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .95, 
+                       rank = "AIC")
+SPLT_SAC_MA_Sum = summary(SPLT_SAC_MA)
+SPLT_SAC_MA_Full_Out = SPLT_SAC_MA_Sum$coefmat.full
+SPLT_SAC_MA_Full_Out
+
+# 4) Delta Models ----------------------------------------------------
+
+pairs(SPLT_Model_Data_Final[,c(1,12:14)], pch = 16)
+
+# Global model for all subset selection
+SPLT_Delta_Global_lm <- 
+  lm(log(Delta_Index) ~ DELTA_RC3 + DELTA_RC2 + DELTA_RC1, 
+     data = SPLT_Model_Data_Final, na.action = "na.fail")
+summary(SPLT_Delta_Global_lm)
+
+# Model assumptions
+plot(SPLT_Delta_Global_lm) # Assumptions look fine
+acf(SPLT_Delta_Global_lm$residuals) # No Autocorreltion
+vif(SPLT_Delta_Global_lm) # All < 2
+
+## All subset selection
+SPLT_DELTA_Global_Dredge <- 
+  dredge(SPLT_Delta_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SPLT_DELTA_Global_Dredge
+
+importance(SPLT_DELTA_Global_Dredge)
+
+### Getting model output and weights
+SPLT_DELTA_Dredge_Output <- 
+  as.data.frame(cbind(SPLT_DELTA_Global_Dredge$`(Intercept)`, 
+                      SPLT_DELTA_Global_Dredge$DELTA_RC1, 
+                      SPLT_DELTA_Global_Dredge$DELTA_RC2,
+                      SPLT_DELTA_Global_Dredge$DELTA_RC3,
+                      SPLT_DELTA_Global_Dredge$df,
+                      round(SPLT_DELTA_Global_Dredge$`R^2`, 2),
+                      round(SPLT_DELTA_Global_Dredge$`*.adjRsq`, 2),
+                      round(SPLT_DELTA_Global_Dredge$logLik, 2), 
+                      round(SPLT_DELTA_Global_Dredge$AICc, 2),
+                      round(SPLT_DELTA_Global_Dredge$delta, 2), 
+                      SPLT_DELTA_Global_Dredge$weight)) %>% 
+  mutate(Species = "SPLT", Region = "DELTA")
+colnames(SPLT_DELTA_Dredge_Output) = c("Intercept", "DELTA_RC1", "DELTA_RC2", "DELTA_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SPLT_DELTA_Dredge_Output
+
+SPLT_DELTA_RC2_Weights <- 
+  SPLT_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "DELTA", Variable = "DELTA_RC2")
+
+SPLT_DELTA_RC3_Weights <- 
+  SPLT_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "DELTA", Variable = "DELTA_RC3")
+
+SPLT_DELTA_Weights <- 
+  SPLT_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "DELTA", Variable = "DELTA_RC1") %>% 
+  bind_rows(SPLT_DELTA_RC2_Weights, SPLT_DELTA_RC3_Weights)
+SPLT_DELTA_Weights
+
+
+# Getting model averaged coefficients for the multiple regression figures below
+SPLT_DELTA_MA = model.avg(SPLT_DELTA_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .96, 
+                       rank = "AIC")
+SPLT_DELTA_MA_Sum = summary(SPLT_DELTA_MA)
+SPLT_DELTA_MA_Full_Out = SPLT_DELTA_MA_Sum$coefmat.full
+SPLT_DELTA_MA_Full_Out
+
+
+# SASU --------------------------------------------------------------------
+
+# Final data
+head(SASU_Model_Data_Final)
+
+# 1) Delta-Wide Models ----------------------------------------------------
+
+pairs(SASU_Model_Data_Final[,c(4,6:8)], pch = 16)
+
+SASU_DW_Global_lm <- 
+  lm(log(Delta_Wide_Index) ~ SAC_RC3 + SAC_RC2 + SAC_RC1, 
+     data = SASU_Model_Data_Final, na.action = "na.fail")
+summary(SASU_DW_Global_lm)
+
+# Model assumptions
+plot(SASU_DW_Global_lm) # Assumptions look fine
+acf(SASU_SAC_Global_lm$residuals) # No Autocorreltion
+vif(SASU_SAC_Global_lm) # All < 2
+
+## All subset selection
+SASU_DW_Global_Dredge <- 
+  dredge(SASU_DW_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SASU_DW_Global_Dredge
+
+importance(SASU_DW_Global_Dredge)
+# Mean flow is most important variable; weights = 0.93
+# Timing also important weights = 0.69
+
+### Getting model output and weights
+SASU_DW_Dredge_Output <- 
+  as.data.frame(cbind(SASU_DW_Global_Dredge$`(Intercept)`, 
+                      SASU_DW_Global_Dredge$SAC_RC1, 
+                      SASU_DW_Global_Dredge$SAC_RC2,
+                      SASU_DW_Global_Dredge$SAC_RC3,
+                      SASU_DW_Global_Dredge$df,
+                      round(SASU_DW_Global_Dredge$`R^2`, 2),
+                      round(SASU_DW_Global_Dredge$`*.adjRsq`, 2),
+                      round(SASU_DW_Global_Dredge$logLik, 2), 
+                      round(SASU_DW_Global_Dredge$AICc, 2),
+                      round(SASU_DW_Global_Dredge$delta, 2), 
+                      SASU_DW_Global_Dredge$weight)) %>% 
+  mutate(Species = "SASU", Region = "DW")
+colnames(SASU_DW_Dredge_Output) = c("Intercept", "SAC_RC1", "SAC_RC2", "SAC_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SASU_DW_Dredge_Output
+
+SASU_DW_RC2_Weights <- 
+  SASU_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "DW", Variable = "SAC_RC2")
+
+SASU_DW_RC3_Weights <- 
+  SASU_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "DW", Variable = "SAC_RC3")
+
+SASU_DW_Weights <- 
+  SASU_DW_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "DW", Variable = "SAC_RC1") %>% 
+  bind_rows(SASU_DW_RC2_Weights, SASU_DW_RC3_Weights)
+SASU_DW_Weights
+
+
+# Getting model averaged coefficients for the multiple regression figures below
+SASU_DW_MA = model.avg(SASU_DW_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .95, 
+                       rank = "AIC")
+SASU_DW_MA_Sum = summary(SASU_DW_MA)
+SASU_DW_MA_Full_Out = SASU_DW_MA_Sum$coefmat.full
+SASU_DW_MA_Full_Out
+
+# 2) SJ Models ----------------------------------------------------
+
+pairs(SASU_Model_Data_Final[,c(3,9:11)], pch = 16)
+
+# Global model for all subset selection
+SASU_SJ_Global_lm <- 
+  lm(log(San_Joaquin_River_Index) ~ SJ_RC3 + SJ_RC2 + SJ_RC1, 
+     data = SASU_Model_Data_Final, na.action = "na.fail")
+summary(SASU_SJ_Global_lm)
+
+# Model assumptions
+plot(SASU_SJ_Global_lm) # Normality is questionable 
+acf(SASU_SJ_Global_lm$residuals) # No Autocorreltion
+vif(SASU_SJ_Global_lm) # All < 2
+
+## All subset selection
+SASU_SJ_Global_Dredge <- 
+  dredge(SASU_SJ_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SASU_SJ_Global_Dredge
+# Top models include Mean flow
+
+importance(SASU_SJ_Global_Dredge)
+# Mean flow is most important variable; weights = 0.63
+
+
+### Getting model output and weights
+SASU_SJ_Dredge_Output <- 
+  as.data.frame(cbind(SASU_SJ_Global_Dredge$`(Intercept)`, 
+                      SASU_SJ_Global_Dredge$SJ_RC1, 
+                      SASU_SJ_Global_Dredge$SJ_RC2,
+                      SASU_SJ_Global_Dredge$SJ_RC3,
+                      SASU_SJ_Global_Dredge$df,
+                      round(SASU_SJ_Global_Dredge$`R^2`, 2),
+                      round(SASU_SJ_Global_Dredge$`*.adjRsq`, 2),
+                      round(SASU_SJ_Global_Dredge$logLik, 2), 
+                      round(SASU_SJ_Global_Dredge$AICc, 2),
+                      round(SASU_SJ_Global_Dredge$delta, 2), 
+                      SASU_SJ_Global_Dredge$weight)) %>% 
+  mutate(Species = "SASU", Region = "SJ")
+colnames(SASU_SJ_Dredge_Output) = c("Intercept", "SJ_RC1", "SJ_RC2", "SJ_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SASU_SJ_Dredge_Output
+
+SASU_SJ_RC2_Weights <- 
+  SASU_SJ_Dredge_Output %>% 
+  filter(!(is.na(SJ_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "SJ", Variable = "SJ_RC2")
+
+SASU_SJ_RC3_Weights <- 
+  SASU_SJ_Dredge_Output %>% 
+  filter(!(is.na(SJ_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "SJ", Variable = "SJ_RC3")
+
+SASU_SJ_Weights <- 
+  SASU_SJ_Dredge_Output %>% 
+  filter(!(is.na(SJ_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "SJ", Variable = "SJ_RC1") %>% 
+  bind_rows(SASU_SJ_RC2_Weights, SASU_SJ_RC3_Weights)
+SASU_SJ_Weights
+
+
+# Getting model averaged coefficients for the multiple regression figures below
+SASU_SJ_MA = model.avg(SASU_SJ_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .95, 
+                       rank = "AIC")
+SASU_SJ_MA_Sum = summary(SASU_SJ_MA)
+SASU_SJ_MA_Full_Out = SASU_SJ_MA_Sum$coefmat.full
+SASU_SJ_MA_Full_Out
+
+# 3) SAC Models ----------------------------------------------------
+
+pairs(SASU_Model_Data_Final[,c(2,6:8)], pch = 16)
+
+# Global model for all subset selection
+SASU_SAC_Global_lm <- 
+  lm(log(Sac_River_Index) ~ SAC_RC3 + SAC_RC2 + SAC_RC1, 
+     data = SASU_Model_Data_Final, na.action = "na.fail")
+summary(SASU_SAC_Global_lm)
+
+# Model assumptions
+plot(SASU_SAC_Global_lm) # Assumptions look fine
+acf(SASU_SAC_Global_lm$residuals) # No Autocorreltion
+vif(SASU_SAC_Global_lm) # All < 2
+
+## All subset selection
+SASU_SAC_Global_Dredge <- 
+  dredge(SASU_SAC_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SASU_SAC_Global_Dredge
+# Top models include Flow timing
+
+importance(SASU_SAC_Global_Dredge)
+# Flow timing is most important variable (but negative); weights = 1
+
+### Getting model output and weights
+SASU_SAC_Dredge_Output <- 
+  as.data.frame(cbind(SASU_SAC_Global_Dredge$`(Intercept)`, 
+                      SASU_SAC_Global_Dredge$SAC_RC1, 
+                      SASU_SAC_Global_Dredge$SAC_RC2,
+                      SASU_SAC_Global_Dredge$SAC_RC3,
+                      SASU_SAC_Global_Dredge$df,
+                      round(SASU_SAC_Global_Dredge$`R^2`, 2),
+                      round(SASU_SAC_Global_Dredge$`*.adjRsq`, 2),
+                      round(SASU_SAC_Global_Dredge$logLik, 2), 
+                      round(SASU_SAC_Global_Dredge$AICc, 2),
+                      round(SASU_SAC_Global_Dredge$delta, 2), 
+                      SASU_SAC_Global_Dredge$weight)) %>% 
+  mutate(Species = "SASU", Region = "SAC")
+colnames(SASU_SAC_Dredge_Output) = c("Intercept", "SAC_RC1", "SAC_RC2", "SAC_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SASU_SAC_Dredge_Output
+
+SASU_SAC_RC2_Weights <- 
+  SASU_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "SAC", Variable = "SAC_RC2")
+
+SASU_SAC_RC3_Weights <- 
+  SASU_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "SAC", Variable = "SAC_RC3")
+
+SASU_SAC_Weights <- 
+  SASU_SAC_Dredge_Output %>% 
+  filter(!(is.na(SAC_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "SAC", Variable = "SAC_RC1") %>% 
+  bind_rows(SASU_SAC_RC2_Weights, SASU_SAC_RC3_Weights)
+SASU_SAC_Weights
+
+# Getting model averaged coefficients for the multiple regression figures below
+SASU_SAC_MA = model.avg(SASU_SAC_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .95, 
+                       rank = "AIC")
+SASU_SAC_MA_Sum = summary(SASU_SAC_MA)
+SASU_SAC_MA_Full_Out = SASU_SAC_MA_Sum$coefmat.full
+SASU_SAC_MA_Full_Out
+
+# 4) Delta Models ----------------------------------------------------
+
+pairs(SASU_Model_Data_Final[,c(1,12:14)], pch = 16)
+
+# Global model for all subset selection
+SASU_Delta_Global_lm <- 
+  lm(log(Delta_Index) ~ DELTA_RC3 + DELTA_RC2 + DELTA_RC1, 
+     data = SASU_Model_Data_Final, na.action = "na.fail")
+summary(SASU_Delta_Global_lm)
+
+# Model assumptions
+plot(SASU_Delta_Global_lm) # Assumptions look fine
+acf(SASU_Delta_Global_lm$residuals) # No Autocorreltion
+vif(SASU_Delta_Global_lm) # All < 2
+
+## All subset selection
+SASU_DELTA_Global_Dredge <- 
+  dredge(SASU_Delta_Global_lm,
+         extra = list(
+           "R^2", "Dredge_Function" = function(x) {
+             s <- summary(x)
+             c(adjRsq = s$adj.r.squared)
+           }))
+SASU_DELTA_Global_Dredge
+# Top models include Flow timing
+
+importance(SASU_DELTA_Global_Dredge)
+
+### Getting model output and weights
+SASU_DELTA_Dredge_Output <- 
+  as.data.frame(cbind(SASU_DELTA_Global_Dredge$`(Intercept)`, 
+                      SASU_DELTA_Global_Dredge$DELTA_RC1, 
+                      SASU_DELTA_Global_Dredge$DELTA_RC2,
+                      SASU_DELTA_Global_Dredge$DELTA_RC3,
+                      SASU_DELTA_Global_Dredge$df,
+                      round(SASU_DELTA_Global_Dredge$`R^2`, 2),
+                      round(SASU_DELTA_Global_Dredge$`*.adjRsq`, 2),
+                      round(SASU_DELTA_Global_Dredge$logLik, 2), 
+                      round(SASU_DELTA_Global_Dredge$AICc, 2),
+                      round(SASU_DELTA_Global_Dredge$delta, 2), 
+                      SASU_DELTA_Global_Dredge$weight)) %>% 
+  mutate(Species = "SASU", Region = "DELTA")
+colnames(SASU_DELTA_Dredge_Output) = c("Intercept", "DELTA_RC1", "DELTA_RC2", "DELTA_RC3", 
+                                    "DF", "R^2", "R^2_Adj","logLik","AICc", 
+                                    "Delta", "Weights", "Species", "Region")
+SASU_DELTA_Dredge_Output
+
+SASU_DELTA_RC2_Weights <- 
+  SASU_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "DELTA", Variable = "DELTA_RC2")
+
+SASU_DELTA_RC3_Weights <- 
+  SASU_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "DELTA", Variable = "DELTA_RC3")
+
+SASU_DELTA_Weights <- 
+  SASU_DELTA_Dredge_Output %>% 
+  filter(!(is.na(DELTA_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "DELTA", Variable = "DELTA_RC1") %>% 
+  bind_rows(SASU_DELTA_RC2_Weights, SASU_DELTA_RC3_Weights)
+SASU_DELTA_Weights
+
+# Getting model averaged coefficients for the multiple regression figures below
+SASU_DELTA_MA = model.avg(SASU_DELTA_Global_Dredge, 
+                       revised.var = TRUE,
+                       cumsum(weight) <= .95, 
+                       rank = "AIC")
+SASU_DELTA_MA_Sum = summary(SASU_DELTA_MA)
+SASU_DELTA_MA_Full_Out = SASU_DELTA_MA_Sum$coefmat.full
+SASU_DELTA_MA_Full_Out
+
+
+# ***Data Output***-------------------------------------------------------------
+Abundance_Models_Output <- 
+  bind_rows(SAPM_DW_Dredge_Output, SAPM_DELTA_Dredge_Output, 
+            SAPM_SAC_Dredge_Output,
+            SPLT_DW_Dredge_Output, SPLT_DELTA_Dredge_Output, 
+            SPLT_SAC_Dredge_Output, SPLT_SJ_Dredge_Output,
+            SASU_DW_Dredge_Output, SASU_DELTA_Dredge_Output, 
+            SASU_SAC_Dredge_Output, SASU_SJ_Dredge_Output)
+Abundance_Models_Output
+
+write.csv(Abundance_Models_Output, "Tables/Abundance_Models_Output.csv", row.names = FALSE)
+
+Abundance_Models_Weights <- 
+  bind_rows(SAPM_DW_Weights, SAPM_DELTA_Weights, 
+            SAPM_SAC_Weights,
+            SPLT_DW_Weights, SPLT_DELTA_Weights, 
+            SPLT_SAC_Weights, SPLT_SJ_Weights,
+            SASU_DW_Weights, SASU_DELTA_Weights, 
+            SASU_SAC_Weights, SASU_SJ_Weights)
+Abundance_Models_Weights
+
+Abundance_Models_Weights_Wide <- 
+pivot_wider(Abundance_Models_Weights, 
+            names_from = Region,
+            values_from = Weights_Sum)
+
+write.csv(Abundance_Models_Weights_Wide, "Tables/Abundance_Models_Weights.csv", row.names = FALSE)
+
+
+# v. Center of Distribution ---------------------------------------------
+
+# Look at center of distribution (what Ted did) based on river KM
+
+### Vary months used for the distribution (later then what was used for the indices) and maybe look at different months of flow too
+
+# When considering months of flow, it probably doesn't make sense to look at flows before spawning...we are using center of dist that was calculated after those flows. It probably doesn't make sense to look at flows during spawning either unless some of the earlier hatched fish are washed DS
+
+# CDist Summary Stats -------------------------------------------------------------
+
+# General plots looking at change in Dist on Sac over the time series. What's apparent is that there's greater variability in the dist of SPLT, which might provide enough contrast to detect relationships with covariates. Also we might be missing a lot of larger part of SAPM and SASU pops.
+plot(CDist_SAC ~ as.numeric(Year), SAPM_CDist, pch = 16)
+plot(CDist_SAC ~ as.numeric(Year), SPLT_CDist, pch = 16)
+plot(CDist_SAC ~ as.numeric(Year), SASU_CDist, pch = 16)
+
+# Species
+SAPM_Sum_Dist_Stats <- 
+  SAPM_CDist %>% 
+  mutate(Species = "SAPM") %>% 
+  group_by(Species) %>% 
+  summarise(Mean = mean(CDist_SAC), Min = min(CDist_SAC), Max = max(CDist_SAC), SD = sd(CDist_SAC))
+head(SAPM_Sum_Dist_Stats)
+
+SPLT_Sum_Dist_Stats <- 
+  SPLT_CDist %>% 
+  mutate(Species = "SPLT") %>% 
+  group_by(Species) %>% 
+  summarise(Mean = mean(CDist_SAC), Min = min(CDist_SAC), Max = max(CDist_SAC), SD = sd(CDist_SAC))
+head(SPLT_Sum_Dist_Stats)
+
+SASU_Sum_Dist_Stats <- 
+  SASU_CDist %>% 
+  mutate(Species = "SASU") %>% 
+  group_by(Species) %>% 
+  summarise(Mean = mean(CDist_SAC), Min = min(CDist_SAC), Max = max(CDist_SAC), SD = sd(CDist_SAC))
+head(SASU_Sum_Dist_Stats)
+
+
+# ***Data Output*** ------------------------------------------------------------
+
+Dist_Summaries <- 
+  rbind(SAPM_Sum_Dist_Stats,
+        SPLT_Sum_Dist_Stats,
+        SASU_Sum_Dist_Stats)
+
+write.csv(Dist_Summaries, "Tables/Dist_Summaries.csv", row.names = FALSE)
+
+
+# SAPM --------------------------------------------------------------------
+
+head(SAPM_Model_Data_Final) # Distribution data
+
+# Visualizing relationships between dist and covariates 
+pairs(SAPM_Model_Data_Final[,c(4,11:13)], pch = 16)
+
+SAPM_SAC_Dist_Global_lm <- 
+  lm(log(CDist_SAC) ~ CDist_RC1 + CDist_RC2 + CDist_RC3, 
+     data = SAPM_Model_Data_Final, 
+     na.action = "na.fail")
+summary(SAPM_SAC_Dist_Global_lm)
+
+# Model assumptions
+plot(SAPM_SAC_Dist_Global_lm) # Normality is questionable
+acf(SAPM_SAC_Dist_Global_lm$residuals) # Autocorreltion is fine
+vif(SAPM_SAC_Dist_Global_lm) # All < 2
+
+## All subset selection
+SAPM_SAC_Dist_Global_Dredge <- 
+  dredge(SAPM_SAC_Dist_Global_lm,
+         extra = list("R^2", "Dredge_Function" = function(x) {
+           s <- summary(x)
+           c(adjRsq = s$adj.r.squared)
+         }))
+SAPM_SAC_Dist_Global_Dredge
+# Top model includes discharge
+
+importance(SAPM_SAC_Dist_Global_Dredge)
+# Mean flow is important; weights = 0.72
+
+### Getting model output and weights
+SAPM_CDist_Dredge_Output <- 
+  as.data.frame(cbind(SAPM_SAC_Dist_Global_Dredge$`(Intercept)`, 
+                      SAPM_SAC_Dist_Global_Dredge$CDist_RC1, 
+                      SAPM_SAC_Dist_Global_Dredge$CDist_RC2,
+                      SAPM_SAC_Dist_Global_Dredge$CDist_RC3,
+                      SAPM_SAC_Dist_Global_Dredge$df,
+                      round(SAPM_SAC_Dist_Global_Dredge$`R^2`, 2),
+                      round(SAPM_SAC_Dist_Global_Dredge$`*.adjRsq`, 2),
+                      round(SAPM_SAC_Dist_Global_Dredge$logLik, 2), 
+                      round(SAPM_SAC_Dist_Global_Dredge$AICc, 2),
+                      round(SAPM_SAC_Dist_Global_Dredge$delta, 2), 
+                      SAPM_SAC_Dist_Global_Dredge$weight)) %>% 
+  mutate(Species = "SAPM")
+colnames(SAPM_CDist_Dredge_Output) = c("Intercept", "CDist_RC1", "CDist_RC2",
+                                       "CDist_RC3", "DF", "R^2", "R^2_Adj",
+                                       "logLik","AICc", "Delta", "Weights",
+                                       "Species")
+SAPM_CDist_Dredge_Output
+
+SAPM_CDist_RC2_Weights <- 
+  SAPM_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "CDist", Variable = "CDist_RC2")
+
+SAPM_CDist_RC3_Weights <- 
+  SAPM_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "CDist", Variable = "CDist_RC3")
+
+SAPM_CDist_Weights <- 
+  SAPM_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SAPM", Region = "CDist", Variable = "CDist_RC1") %>% 
+  bind_rows(SAPM_CDist_RC2_Weights, SAPM_CDist_RC3_Weights)
+SAPM_CDist_Weights
+
+SAPM_CDist_MA = model.avg(SAPM_SAC_Dist_Global_Dredge,
+                          revised.var = TRUE,
+                          cumsum(weight) <= .95, 
+                          rank = "AIC")
+SAPM_CDist_MA_Sum = summary(SAPM_CDist_MA)
+SAPM_CDist_MA_Full_Out = SAPM_CDist_MA_Sum$coefmat.full
+SAPM_CDist_MA_Full_Out
+
+# SPLT --------------------------------------------------------------------
+
+head(SPLT_Model_Data_Final)
+
+# Visualizing relationships between dist and covariates 
+pairs(SPLT_Model_Data_Final[,c(5,15:17)], pch = 16)
+
+SPLT_SAC_Dist_Global_lm <- 
+  lm(log(CDist_SAC) ~ CDist_RC1 + CDist_RC2 + CDist_RC3, 
+     data = SPLT_Model_Data_Final, 
+     na.action = "na.fail")
+summary(SPLT_SAC_Dist_Global_lm)
+
+# Model assumptions
+plot(SPLT_SAC_Dist_Global_lm) # Normality is questionable
+acf(SPLT_SAC_Dist_Global_lm$residuals) # Autocorreltion is fine
+vif(SPLT_SAC_Dist_Global_lm) # All < 2
+
+## All subset selection
+SPLT_SAC_Dist_Global_Dredge <- 
+  dredge(SPLT_SAC_Dist_Global_lm,
+         extra = list("R^2", "Dredge_Function" = function(x) {
+           s <- summary(x)
+           c(adjRsq = s$adj.r.squared)
+                                       }))
+SPLT_SAC_Dist_Global_Dredge
+# Top model includes discharge
+
+importance(SPLT_SAC_Dist_Global_Dredge)
+
+### Getting model output and weights
+SPLT_CDist_Dredge_Output <- 
+  as.data.frame(cbind(SPLT_SAC_Dist_Global_Dredge$`(Intercept)`, 
+                      SPLT_SAC_Dist_Global_Dredge$CDist_RC1, 
+                      SPLT_SAC_Dist_Global_Dredge$CDist_RC2,
+                      SPLT_SAC_Dist_Global_Dredge$CDist_RC3,
+                      SPLT_SAC_Dist_Global_Dredge$df,
+                      round(SPLT_SAC_Dist_Global_Dredge$`R^2`, 2),
+                      round(SPLT_SAC_Dist_Global_Dredge$`*.adjRsq`, 2),
+                      round(SPLT_SAC_Dist_Global_Dredge$logLik, 2), 
+                      round(SPLT_SAC_Dist_Global_Dredge$AICc, 2),
+                      round(SPLT_SAC_Dist_Global_Dredge$delta, 2), 
+                      SPLT_SAC_Dist_Global_Dredge$weight)) %>% 
+  mutate(Species = "SPLT")
+colnames(SPLT_CDist_Dredge_Output) = c("Intercept", "CDist_RC1", "CDist_RC2",
+                                       "CDist_RC3", "DF", "R^2", "R^2_Adj",
+                                       "logLik","AICc", "Delta", "Weights",
+                                       "Species")
+SPLT_CDist_Dredge_Output
+
+SPLT_CDist_RC2_Weights <- 
+  SPLT_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "CDist", Variable = "CDist_RC2")
+
+SPLT_CDist_RC3_Weights <- 
+  SPLT_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "CDist", Variable = "CDist_RC3")
+
+SPLT_CDist_Weights <- 
+  SPLT_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SPLT", Region = "CDist", Variable = "CDist_RC1") %>% 
+  bind_rows(SPLT_CDist_RC2_Weights, SPLT_CDist_RC3_Weights)
+SPLT_CDist_Weights
+
+SPLT_CDist_MA = model.avg(SPLT_SAC_Dist_Global_Dredge,
+                              revised.var = TRUE,
+                              cumsum(weight) <= .95, 
+                              rank = "AIC")
+SPLT_CDist_MA_Sum = summary(SPLT_CDist_MA)
+SPLT_CDist_MA_Full_Out = SPLT_CDist_MA_Sum$coefmat.full
+SPLT_CDist_MA_Full_Out
+
+
+# SASU --------------------------------------------------------------------
+
+head(SASU_Model_Data_Final) # Distribution data
+
+# Visualizing relationships between dist and covariates 
+pairs(SASU_Model_Data_Final[,c(5,15:17)], pch = 16)
+
+SASU_SAC_Dist_Global_lm <- 
+  lm(log(CDist_SAC) ~ CDist_RC1 + CDist_RC2 + CDist_RC3, 
+     data = SASU_Model_Data_Final, 
+     na.action = "na.fail")
+summary(SASU_SAC_Dist_Global_lm)
+
+# Model assumptions
+plot(SASU_SAC_Dist_Global_lm) # Normality is questionable
+acf(SASU_SAC_Dist_Global_lm$residuals) # Autocorreltion is fine
+vif(SASU_SAC_Dist_Global_lm) # All < 2
+
+## All subset selection
+SASU_SAC_Dist_Global_Dredge <- 
+  dredge(SASU_SAC_Dist_Global_lm,
+         extra = list("R^2", "Dredge_Function" = function(x) {
+           s <- summary(x)
+           c(adjRsq = s$adj.r.squared)
+         }))
+SASU_SAC_Dist_Global_Dredge
+# Top model includes discharge
+
+importance(SASU_SAC_Dist_Global_Dredge)
+# Mean flow is important; weights = 0.72
+
+### Getting model output and weights
+SASU_CDist_Dredge_Output <- 
+  as.data.frame(cbind(SASU_SAC_Dist_Global_Dredge$`(Intercept)`, 
+                      SASU_SAC_Dist_Global_Dredge$CDist_RC1, 
+                      SASU_SAC_Dist_Global_Dredge$CDist_RC2,
+                      SASU_SAC_Dist_Global_Dredge$CDist_RC3,
+                      SASU_SAC_Dist_Global_Dredge$df,
+                      round(SASU_SAC_Dist_Global_Dredge$`R^2`, 2),
+                      round(SASU_SAC_Dist_Global_Dredge$`*.adjRsq`, 2),
+                      round(SASU_SAC_Dist_Global_Dredge$logLik, 2), 
+                      round(SASU_SAC_Dist_Global_Dredge$AICc, 2),
+                      round(SASU_SAC_Dist_Global_Dredge$delta, 2), 
+                      SASU_SAC_Dist_Global_Dredge$weight)) %>% 
+  mutate(Species = "SASU")
+colnames(SASU_CDist_Dredge_Output) = c("Intercept", "CDist_RC1", "CDist_RC2",
+                                       "CDist_RC3", "DF", "R^2", "R^2_Adj",
+                                       "logLik","AICc", "Delta", "Weights",
+                                       "Species")
+SASU_CDist_Dredge_Output
+
+SASU_CDist_RC2_Weights <- 
+  SASU_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC2))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "CDist", Variable = "CDist_RC2")
+
+SASU_CDist_RC3_Weights <- 
+  SASU_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC3))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "CDist", Variable = "CDist_RC3")
+
+SASU_CDist_Weights <- 
+  SASU_CDist_Dredge_Output %>% 
+  filter(!(is.na(CDist_RC1))) %>% 
+  summarise(Weights_Sum = round(sum(Weights), 2)) %>% 
+  mutate(Species = "SASU", Region = "CDist", Variable = "CDist_RC1") %>% 
+  bind_rows(SASU_CDist_RC2_Weights, SASU_CDist_RC3_Weights)
+SASU_CDist_Weights
+
+SASU_CDist_MA = model.avg(SASU_SAC_Dist_Global_Dredge,
+                          revised.var = TRUE,
+                          cumsum(weight) <= .95, 
+                          rank = "AIC")
+SASU_CDist_MA_Sum = summary(SASU_CDist_MA)
+SASU_CDist_MA_Full_Out = SASU_CDist_MA_Sum$coefmat.full
+SASU_CDist_MA_Full_Out
+
+# ***Data Output***-------------------------------------------------------------
+CDist_Models_Output <- 
+  bind_rows(SAPM_CDist_Dredge_Output,
+            SPLT_CDist_Dredge_Output,
+            SASU_CDist_Dredge_Output) %>% 
+  select(!(Region))
+CDist_Models_Output
+
+write.csv(CDist_Models_Output, "Tables/CDist_Models_Output.csv", row.names = FALSE)
+
+CDist_Models_Weights <- 
+  bind_rows(SAPM_CDist_Weights,
+            SPLT_CDist_Weights,
+            SASU_CDist_Weights) %>% 
+  mutate(Var = "CDist") %>% 
+  select(!(Region))
+CDist_Models_Weights
+
+CDist_Models_Weights_Wide <- 
+  pivot_wider(CDist_Models_Weights, 
+              names_from = Var,
+              values_from = Weights_Sum)
+
+write.csv(CDist_Models_Weights_Wide, "Tables/CDist_Models_Weights.csv", row.names = FALSE)
+
+
+
+
+
+# Flow over  time  --------------------------------------------------------
+
+FOT <- 
+  Discharge %>% 
+  filter(Mo %in% c(1:6)) %>% 
+  ggplot(aes(x = Julian_Date, y = SAC))+
+  geom_line() +
+  facet_wrap(~Year)
+FOT
+
+# Figures -----------------------------------------------------------------
+
+
+# i. Abundance ------------------------------------------------------------
+
+
+# SAPM --------------------------------------------------------------------
+
+head(SAPM_Index_Final)
+
+SAPM_Index_Final_Long <- 
+  pivot_longer(SAPM_Index_Final,
+               cols = c(Delta_Index, Sac_River_Index, San_Joaquin_River_Index),
+               names_to = "Regions") %>% 
+  select(Year, Regions, value)
+
+SAPM_Abun_GGPLOT <- 
+  ggplot(data= SAPM_Index_Final_Long, aes(x=Year, y=value, fill = Regions)) +
+  geom_bar(position="stack", stat = "identity", color = "black") +
+  scale_fill_manual(values = c("White", "Grey", "Black"),
+                    labels = c("Delta", "Sacramento", "San Joaquin")) +
+  labs(x = "", y = "") +
+  ggtitle("(A) Sacramento Pikeminnow") +
+  scale_x_discrete(expand = c(0, 0), breaks = seq(1995, 2019, by = 2)) +
+  scale_y_continuous(limits = c(0, 2), expand = c(0, 0)) +
+  theme_classic(base_size = 24) +
+  theme(axis.text = element_text(colour = "black")) +
+  theme(axis.line = element_line(colour = "black", size = .65)) +
+  theme(axis.ticks.y = element_line(size = .65)) +
+  theme(text = element_text(color = "black", family = "Times")) +
+  theme(legend.position="")
+SAPM_Abun_GGPLOT
+
+
+# SPLT --------------------------------------------------------------------
+
+head(SPLT_Index_Final)
+
+SPLT_Index_Final_Long <- 
+  pivot_longer(SPLT_Index_Final,
+               cols = c(Delta_Index, Sac_River_Index, San_Joaquin_River_Index),
+               names_to = "Regions") %>% 
+  select(Year, Regions, value)
+
+SPLT_Abun_GGPLOT <- 
+  ggplot(data= SPLT_Index_Final_Long, aes(x=Year, y=value, fill = Regions)) +
+  geom_bar(position="stack", stat = "identity", color = "black") +
+  scale_fill_manual(values = c("White", "Grey", "Black"),
+                    labels = c("Delta", "Sacramento", "San Joaquin")) +
+  labs(x = "", y = "Abundance Index") +
+  ggtitle("(B) Sacramento Splittail") +
+  scale_x_discrete(expand = c(0, 0), breaks = seq(1995, 2019, by = 2)) +
+  scale_y_continuous(limits = c(0, 50), expand = c(0, 0)) +
+  theme_classic(base_size = 24) +
+  theme(axis.text = element_text(colour = "black")) +
+  theme(axis.line = element_line(colour = "black", size = .65)) +
+  theme(axis.ticks.y = element_line(size = .65)) +
+  theme(text = element_text(color = "black", family = "Times")) 
+SPLT_Abun_GGPLOT
+
+# SASU --------------------------------------------------------------------
+
+head(SASU_Index_Final)
+
+SASU_Index_Final_Long <- 
+  pivot_longer(SASU_Index_Final,
+               cols = c(Delta_Index, Sac_River_Index, San_Joaquin_River_Index),
+               names_to = "Regions") %>% 
+  select(Year, Regions, value)
+
+SASU_Abun_GGPLOT <- 
+  ggplot(data= SASU_Index_Final_Long, aes(x=Year, y=value, fill = Regions)) +
+  geom_bar(position="stack", stat = "identity", color = "black") +
+  scale_fill_manual(values = c("White", "Grey", "Black"),
+                    labels = c("Delta", "Sacramento", "San Joaquin")) +
+  labs(x = "Year", y = "") +
+  scale_x_discrete(expand = c(0, 0), breaks = seq(1995, 2019, by = 2)) +
+  scale_y_continuous(limits = c(0, 10), expand = c(0, 0), 
+                     breaks = seq(0, 10, by = 2)) +
+  theme_classic(base_size = 24) +
+  ggtitle("(C) Sacramento Sucker") +
+  theme(axis.text = element_text(colour = "black")) +
+  theme(axis.line = element_line(colour = "black", size = .65)) +
+  theme(axis.ticks.y = element_line(size = .65)) +
+  theme(text = element_text(color = "black", family = "Times")) +
+  theme(legend.position="")
+SASU_Abun_GGPLOT
+
+
+# Final Abun Figure -------------------------------------------------------
+
+pdf("Figures/Sp_Abun_Trends.pdf", width = 12, height = 15)
+SAPM_Abun_GGPLOT/SPLT_Abun_GGPLOT/SASU_Abun_GGPLOT
+dev.off()
+
+
+# Disconnect from DB ------------------------------------------------------
+
+DBI::dbDisconnect(conn=DJFMP_Database_Con)
