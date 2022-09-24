@@ -8,6 +8,7 @@ library(contentid)
 library(readr)
 library(dplyr)
 library(tidyr)
+library(lubridate)
 
 # Read data ------------------------------
 # https://portal.edirepository.org/nis/mapbrowse?packageid=edi.244.9
@@ -40,14 +41,18 @@ ybfmp_catch0 <- read_csv(ybfmp_catch_file)
 # Join data ------------------------------------
 # Are we adjusting for length frequency?
 
+# DJFMP -------
 
-# Filter data
-
-# From USFWS list
+# Filter from USFWS list
 stations_notincl <- c("SP000E","SP000W","SP001W","SP003E",
                       "SP008E","SA001M","SA004W","SA007E","SA008W","SA009E", "SA010W")
 djfmp_catch <- djfmp_catch0 %>% 
   filter(!(StationCode %in% stations_notincl))
+
+# remove unnecessary columns
+djfmp_catch2 <- djfmp_catch[c(1:13, 17:22, 26:29, 33, 48)]
+
+# YBFMP -------
 
 # combine ybfmp length and wq tables
 ybfmp_lenwq0 <- left_join(ybfmp_length, ybfmp_wq0, by="EventID")
@@ -56,5 +61,20 @@ ybfmp_lenwq0 <- left_join(ybfmp_length, ybfmp_wq0, by="EventID")
 ybfmp_lenwq <- ybfmp_lenwq0 %>%
   filter(MethodCode == "BSEIN")
 
+# update ybfmp dates
+ybfmp_lenwq$SampleDate <- mdy(ybfmp_lenwq$SampleDate)
+
+# add in IEP fish codes
+codes <- read_csv("Data/taxonomy.csv")
+codes <- select(codes, OrganismCode, IEPFishCode)
+
+ybfmp_lenwq2 <- merge(ybfmp_lenwq, codes, by = 'OrganismCode')
+
+# remove unnecessary columns
+ybfmp_lenwq3 <- ybfmp_lenwq2[c(1, 5:6, 15:34, 38)]
+
+# Combine -------
+
+allfmp_catch <- bind_rows(djfmp_catch2, ybfmp_lenwq3)
 
 
