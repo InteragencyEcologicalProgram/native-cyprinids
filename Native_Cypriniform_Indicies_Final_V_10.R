@@ -18,7 +18,11 @@ windowsFonts(Times = windowsFont("Times New Roman"))
 # _______Sample Data_______ -------------------------------------------------------
 
 # Importing sample data that was obtained in Native_Cypriniform_Indicies_Final_V_7.R
-# Note - only includes seines with a condition code = 1 & removed stations that don't have a subarea
+# Notes on data prep from original V7 code:
+  # only includes seines with a condition code = 1
+  # removed stations that don't have a subarea
+  # calculated seine volume as: SeineVolume = (SeineLength * SeineWidth * SeineDepth)/2
+  # Filtered out seine measurements that fall outside of SOP
 
 # Outputting final sample data
 Sample_Table <- 
