@@ -11,7 +11,7 @@ library(tidyr)
 library(lubridate)
 
 # Read data ------------------------------
-# https://portal.edirepository.org/nis/mapbrowse?packageid=edi.244.9
+# https://portal.edirepository.org/nis/mapbrowse?packageid=edi.244.9 #djfmp
 # https://portal.edirepository.org/nis/mapbrowse?scope=edi&identifier=233&revision=3
 
 # store cached version
@@ -31,7 +31,33 @@ ybfmp_sites_file <- contentid::resolve("hash://sha256/acc9940abf5662e81ee594553e
 ybfmp_catch_file <- contentid::resolve("hash://sha256/110b7e3a5cac91b6a2619e2421c7c19f22fb4cc84335b1cc2e5d749080dc9d92")
 
 # read files
-djfmp_catch0 <- read_csv(djfmp_catch_file)
+  ## see column type designations: https://readr.tidyverse.org/reference/read_delim.html
+  ## .default = the default column type, if not specified. I let R guess the rest to save time.
+djfmp_catch0 <- read_csv(djfmp_catch_file,
+                         col_types = cols(.default = "?",
+                                          SampleDate = "D", 
+                                          SampleTime = "t", 
+                                          Secchi = "d", 
+                                          TowNumber = "i", 
+                                          SamplingDirection = "i", 
+                                          TowDuration = "d",
+                                          FlowDebris = "i",
+                                          FlowmeterStart = "d",
+                                          FlowmeterEnd = "d",
+                                          FlowmeterDifference = "d",
+                                          Volume = "d",
+                                          StageCode = "c",
+                                          Expression = "c",
+                                          ArchivalID = "c",
+                                          GeneticID = "c",
+                                          Probability1 = "d",
+                                          GeneticID2 = "c",
+                                          Probability2 = "d",
+                                          SexGeneID = "c",
+                                          Ots28 = "c",
+                                          Lab = "c",
+                                          GeneticTest = "c",
+                                          GeneticModel = "c"))
 djfmp_sites <- read_csv(djfmp_site_file)
 ybfmp_length <- read_csv(ybfmp_length_file)
 ybfmp_wq0 <- read_csv(ybfmp_wq_file)
