@@ -108,12 +108,15 @@ djfmp_catch2 <- djfmp_catch %>%
          Volume, IEPFishCode, ForkLength, Count) 
 
 ### length frequency ---------------------
+
+# filter to table of fish with length data and calculate sum caught at each event/length
 djfmp_length_sum <- djfmp_catch2 %>% 
   filter(ForkLength>0) %>%
   group_by(EventID, Volume, IEPFishCode, ForkLength)  %>%
   summarise(LengthFrequency = sum(Count)) %>%
   ungroup()
 
+# calculate total count of those measured per event
 djfmp_catchtotal <- djfmp_catch2 %>%
   group_by(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearConditionCode,
            WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
@@ -121,6 +124,8 @@ djfmp_catchtotal <- djfmp_catch2 %>%
            Volume, IEPFishCode) %>%
   summarise(TotalCount = sum(Count))
 
+# Merge the rest of the catch, and apply below to get CountAdj
+# CountAdj = n at FL/n measured * total catch
 djfmp_catchlength <- djfmp_length_sum %>%
   group_by(EventID, Volume, IEPFishCode) %>%
   mutate(TotalMeasured = sum(LengthFrequency, na.rm = TRUE)) %>%
@@ -133,7 +138,7 @@ djfmp_catchlength <- djfmp_length_sum %>%
          Volume, IEPFishCode, ForkLength, CountAdj) 
   
 
-# fill in zeroes
+# fill in zeroes for all instances of fish not caught
 djfmp_all <- djfmp_catchlength %>% 
   complete(nesting(EventID, Location, RegionCode, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearConditionCode,
                    WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
@@ -142,23 +147,29 @@ djfmp_all <- djfmp_catchlength %>%
           IEPFishCode, 
           fill = list(CountAdj = 0, ForkLength = 0))
 
-# filter to cyprinids before adding zeroes
+# filter to cyprinids of interest only
 djfmp_cyprinids <- filter(djfmp_all, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT")) 
 
 
 ## YBFMP -------
 
 ### length frequency ---------------------
+
 #combine ybfmp length and wq tables
 ybfmp_lenwq <- left_join(ybfmp_length0, ybfmp_wq0, by="EventID")
 ybfmp_lenwqeffort <- left_join(ybfmp_lenwq, ybfmp_sample0, by = "EventID") 
 
+# calculate total counts by event/organism/forklength in length table
 ybfmp_length_sum <- ybfmp_lenwqeffort %>%
   mutate(CountL = 1) %>%
   group_by(EventID, SeineVolume, OrganismCode, ForkLength) %>%
   summarise(LengthFrequency = sum(CountL)) %>%
   ungroup()
 
+# Now calculate total by event/organism, join to larger catch total, and apply proportional fork length catch to total catch
+# CountAdj = n at FL/n measured * total catch
+# Fix instances where there was nothing measured (either because no catch at all or just none measured)
+# Make FL = 0 if currently NA to match DJFMP notation
 ybfmp_catchlength <- ybfmp_length_sum %>%
   group_by(EventID, OrganismCode) %>%
   mutate(TotalMeasured = sum(LengthFrequency, na.rm = TRUE)) %>%
@@ -192,7 +203,7 @@ ybfmp_seine <- left_join(ybfmp_catchlength, ybfmp_wq0, by = "EventID") %>%
          FlowDebris, SiteDisturbance, AlternateSite, 
          Volume, IEPFishCode, ForkLength, CountAdj) 
 
-# filter cyprinids
+# filter to cyprinids of interest only
 ybfmp_cyprinids <- filter(ybfmp_seine, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT"))
 summary(ybfmp_cyprinids)
 ## Combine -------
