@@ -7,9 +7,17 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(lubridate)
 ```
 
 ```{r}
+data <- readRDS("data_clean/seine_djfmp_ybfmp.rds")
+summary(data)
 
+filtered <- data %>%
+  mutate(year = lubridate::year(Datetime)) %>%
+  filter(year>1995)
 ```
 
