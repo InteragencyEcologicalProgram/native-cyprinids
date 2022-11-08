@@ -212,5 +212,7 @@ summary(ybfmp_cyprinids)
 allfmp_catch <- bind_rows(djfmp_cyprinids, ybfmp_cyprinids) %>%
   filter(GearConditionCode<3) 
 
+# filter to 1995+
+
 # Write --------
 saveRDS(allfmp_catch, "data_clean/seine_djfmp_ybfmp.rds")
