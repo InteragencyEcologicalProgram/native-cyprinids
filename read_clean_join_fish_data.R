@@ -184,7 +184,7 @@ ybfmp_catchlength <- ybfmp_length_sum %>%
 
 ### filter and clean --------------
 # beach seine only, add IEPFishCode to standardize with USFWS, add variables in DJFMP, select columns
-ybfmp_seine <- left_join(ybfmp_catchlength, ybfmp_wq0, by = "EventID") %>%
+ybfmp_seine0 <- left_join(ybfmp_catchlength, ybfmp_wq0, by = "EventID") %>%
   filter(MethodCode == "BSEIN") %>%
   left_join(ybfmp_tax0 %>% select(OrganismCode, IEPFishCode)) %>%
   left_join(ybfmp_sample %>% select(EventID, Volume=SeineVolume)) %>%
@@ -198,14 +198,35 @@ ybfmp_seine <- left_join(ybfmp_catchlength, ybfmp_wq0, by = "EventID") %>%
          SiteDisturbance = NA, 
          AlternateSite = NA,
         EventID = paste0("YBFMP_", EventID)) %>%
-  select(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearConditionCode,
+  select(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearCode, GearConditionCode,
          WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
          FlowDebris, SiteDisturbance, AlternateSite, 
          Volume, IEPFishCode, ForkLength, CountAdj) 
 
+# Filter out alternate gears
+gear_notincl_yb <- c("SEINENCL", "SEINCOVE", "SEIN30", "SEIN100")
+
+ybfmp_seine <- ybfmp_seine0 %>% 
+  filter(!(GearCode %in% gear_notincl_yb))
+
+df2<-ybfmp_seine %>% 
+  group_by(StationCode, SampleDate) %>% 
+  summarize("count.mean"= mean(CountAdj))
+
+table(df2$StationCode)
+
+LIS <- filter(df2, StationCode == "AL4")
+
+# Filter sites that are infrequently sampled or sampled only during inundation
+stations_notincl_yb <- c("YB", "LIS", "FW1", "PCS", "SB1", "LIHF", "CCS1", "CCS2", "CCS3", "CCS4", "RD22", "LIHFS", "YBI80", "SB2")
+
+ybfmp_seine1 <- ybfmp_seine %>% 
+  filter(!(StationCode %in% stations_notincl_yb))
+
 # filter to cyprinids of interest only
-ybfmp_cyprinids <- filter(ybfmp_seine, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT"))
+ybfmp_cyprinids <- filter(ybfmp_seine_2, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT"))
 summary(ybfmp_cyprinids)
+
 ## Combine -------
 
 # combine and remove Condition Code <3
