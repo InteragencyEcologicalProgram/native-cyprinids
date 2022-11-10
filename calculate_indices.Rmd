@@ -3,6 +3,8 @@ title: "calculate_indices"
 author: "Catarina Pien"
 date: '2022-10-07'
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -13,11 +15,22 @@ library(lubridate)
 ```
 
 ```{r}
+# read in catch data
 data <- readRDS("data_clean/seine_djfmp_ybfmp.rds")
 summary(data)
 
-filtered <- data %>%
-  mutate(year = lubridate::year(Datetime)) %>%
-  filter(year>1995)
+# read in discharge data from DAYFLOW
+
+Discharge <- 
+  read.csv("data/dayflow_1994_2019.csv")
+Discharge$Year <- as.factor(Discharge$Year)
+Discharge$Mo <- as.factor(Discharge$Mo)
+
+# read in river mile data - Will be used to determine center of distribution 
+
+Site_RM <- 
+  read.csv("Data/Site_Coords.csv")
+
+
 ```
 
