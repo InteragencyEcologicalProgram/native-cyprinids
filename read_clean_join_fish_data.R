@@ -150,6 +150,7 @@ djfmp_all <- djfmp_catchlength %>%
 # filter to cyprinids of interest only
 djfmp_cyprinids <- filter(djfmp_all, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT")) 
 
+# original study filtered to gear condition 1 and removed all seines that did not match current SOP, we chose not to do that here
 
 ## YBFMP -------
 
@@ -203,37 +204,41 @@ ybfmp_seine0 <- left_join(ybfmp_catchlength, ybfmp_wq0, by = "EventID") %>%
          FlowDebris, SiteDisturbance, AlternateSite, 
          Volume, IEPFishCode, ForkLength, CountAdj) 
 
-# Filter out alternate gears
+# Filter out alternate gears used only in early couple years of the program
 gear_notincl_yb <- c("SEINENCL", "SEINCOVE", "SEIN30", "SEIN100")
 
 ybfmp_seine <- ybfmp_seine0 %>% 
   filter(!(GearCode %in% gear_notincl_yb))
 
-df2<-ybfmp_seine %>% 
-  group_by(StationCode, SampleDate) %>% 
-  summarize("count.mean"= mean(CountAdj))
+# Filter sites 
+  ## LIS - total of 137 samples, discontinued after 2012
+  ## YB - total of 275 samples, fairly consistent until 2017
+  ## CCS - Cache Slough - remove
+  ## PCS - only 9 total samples, possibly BL1 recorded incorrectly - remove
+  ## FW1, SB1, LIHF, RD22, LIHFS, YBI80, SB2 - all inundation sites not regularly sampled - remove
+  ## BL 1, 2, 4 and AL 1 sampled since 1998 - keep
+  ## BL 3 & 5 sampled since 2007
+  ## AL 3 sampled since 2005
+  ## AL 2 & 4 sampled since 2010, AL 2 discontinued after 2017  
+  ## BL6 sampled during 2015 & 2016 to help fill gap while unable to sample BL5 - keep
 
-table(df2$StationCode)
-
-LIS <- filter(df2, StationCode == "AL4")
-
-# Filter sites that are infrequently sampled or sampled only during inundation
-stations_notincl_yb <- c("YB", "LIS", "FW1", "PCS", "SB1", "LIHF", "CCS1", "CCS2", "CCS3", "CCS4", "RD22", "LIHFS", "YBI80", "SB2")
+stations_notincl_yb <- c("CCS1", "CCS2", "CCS3", "CCS4", "PCS", "FW1", "SB1", "LIHF", "RD22", "LIHFS", "YBI80", "SB2")
 
 ybfmp_seine1 <- ybfmp_seine %>% 
   filter(!(StationCode %in% stations_notincl_yb))
 
 # filter to cyprinids of interest only
-ybfmp_cyprinids <- filter(ybfmp_seine_2, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT"))
+ybfmp_cyprinids <- filter(ybfmp_seine1, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT"))
 summary(ybfmp_cyprinids)
 
 ## Combine -------
 
 # combine and remove Condition Code <3
-allfmp_catch <- bind_rows(djfmp_cyprinids, ybfmp_cyprinids) %>%
+allfmp_catch0 <- bind_rows(djfmp_cyprinids, ybfmp_cyprinids) %>%
   filter(GearConditionCode<3) 
 
 # filter to 1995+
+allfm_catch <- allfmp_catch %>% filter(SampleDate > '1994-12-31')
 
 # Write --------
 saveRDS(allfmp_catch, "data_clean/seine_djfmp_ybfmp.rds")

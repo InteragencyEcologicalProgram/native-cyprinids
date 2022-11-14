@@ -6,20 +6,37 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 ---
-
+# Load packages
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-library(dplyr)
-library(lubridate)
+if (!require('tidyverse')) install.packages('tidyverse'); library('tidyverse')
+if (!require('patchwork')) install.packages('patchwork'); library('patchwork')
+if (!require('lubridate')) install.packages('lubridate'); library('lubridate')
+if (!require('odbc')) install.packages('odbc'); library('odbc') # database functions
+if (!require('Kendall')) install.packages('Kendall'); library('Kendall')
+if (!require('car')) install.packages('car'); library('car')
+if (!require('MuMIn')) install.packages('MuMIn'); library('MuMIn')
+if (!require('lme4')) install.packages('lme4'); library('lme4')
+if (!require('afex')) install.packages('afex'); library('afex')
+if (!require('trend')) install.packages('trend'); library('trend')
+if (!require('rms')) install.packages('rms'); library('rms')
+if (!require('mgcv')) install.packages('mgcv'); library('mgcv')
+options(scipen=999) # Getting rid of scientific notation
+windowsFonts(Times = windowsFont("Times New Roman"))
 ```
 
+# Bring in data
 ```{r}
 # read in catch data
 data <- readRDS("data_clean/seine_djfmp_ybfmp.rds")
 summary(data)
 
+# add year column
+data$Year <- format(data$SampleDate, format="%Y")
+
 # read in discharge data from DAYFLOW
+## needs updating through 2021, maybe?
 
 Discharge <- 
   read.csv("data/dayflow_1994_2019.csv")
@@ -27,10 +44,44 @@ Discharge$Year <- as.factor(Discharge$Year)
 Discharge$Mo <- as.factor(Discharge$Mo)
 
 # read in river mile data - Will be used to determine center of distribution 
-
+## needs updating to reflect YBFMP sites and maybe DJFMP data that was filtered out in prior versions?
 Site_RM <- 
   read.csv("Data/Site_Coords.csv")
+```
 
+# Create species datasets
+```{r}
+# SAPM Data ---------------------------------------------------------------
 
+data_SACPIK <- 
+  data %>% 
+  filter(!(is.na(Volume))) %>% # Removing samples without volume data
+  select(EventID, Location, RegionCode, StationCode, SampleDate, Year, Month, Jday, IEPFishCode, ForkLength, CountAdj, Volume, DO, WaterTemp, Turbidity, Secchi, SpecificConductance) %>% 
+  filter(IEPFishCode == "SACPIK") %>%  # Only keeping catch for SAPM
+  mutate(IEPFishCode = as.character(IEPFishCode))
+head(data_SACPIK)
+str(data_SACPIK)
+
+# SPLT Data ---------------------------------------------------------------
+
+data_SPLITT <- 
+  data %>% 
+  filter(!(is.na(Volume))) %>% # Removing samples without volume data
+  select(EventID, Location, RegionCode, StationCode, SampleDate, Year, Month, Jday, IEPFishCode, ForkLength, CountAdj, Volume, DO, WaterTemp, Turbidity, Secchi, SpecificConductance) %>% 
+  filter(IEPFishCode == "SPLITT") %>%  # Only keeping catch for SAPM
+  mutate(IEPFishCode = as.character(IEPFishCode))
+head(data_SPLITT)
+str(data_SPLITT)
+
+# SASU Data ---------------------------------------------------------------
+
+data_SACSUC <- 
+  data %>% 
+  filter(!(is.na(Volume))) %>% # Removing samples without volume data
+  select(EventID, Location, RegionCode, StationCode, SampleDate, Year, Month, Jday, IEPFishCode, ForkLength, CountAdj, Volume, DO, WaterTemp, Turbidity, Secchi, SpecificConductance) %>% 
+  filter(IEPFishCode == "SACSUC") %>%  # Only keeping catch for SAPM
+  mutate(IEPFishCode = as.character(IEPFishCode))
+head(data_SACSUC)
+str(data_SACSUC)
 ```
 
