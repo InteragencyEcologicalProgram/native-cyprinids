@@ -102,7 +102,8 @@ djfmp_catch2 <- djfmp_catch %>%
          Jday = yday(Datetime)) %>% 
   left_join(djfmp_sample) %>%
   mutate(EventID = paste0("DJFMP_", n)) %>%
-  select(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearConditionCode,
+  select(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, Jday, 
+         MethodCode, GearConditionCode,
          WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
          FlowDebris, SiteDisturbance, AlternateSite, 
          Volume, IEPFishCode, ForkLength, Count) 
@@ -118,7 +119,8 @@ djfmp_length_sum <- djfmp_catch2 %>%
 
 # calculate total count of those measured per event
 djfmp_catchtotal <- djfmp_catch2 %>%
-  group_by(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearConditionCode,
+  group_by(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, 
+           Jday, MethodCode, GearConditionCode,
            WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
            FlowDebris, SiteDisturbance, AlternateSite, 
            Volume, IEPFishCode) %>%
@@ -132,7 +134,8 @@ djfmp_catchlength <- djfmp_length_sum %>%
   ungroup() %>%
   right_join(djfmp_catchtotal) %>%
   mutate(CountAdj = round((LengthFrequency/TotalMeasured)* TotalCount,2)) %>%
-            select(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearConditionCode,
+            select(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, 
+                   Month, Jday, MethodCode, GearConditionCode,
          WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
          FlowDebris, SiteDisturbance, AlternateSite, 
          Volume, IEPFishCode, ForkLength, CountAdj) 
@@ -140,7 +143,8 @@ djfmp_catchlength <- djfmp_length_sum %>%
 
 # fill in zeroes for all instances of fish not caught
 djfmp_all <- djfmp_catchlength %>% 
-  complete(nesting(EventID, Location, RegionCode, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearConditionCode,
+  complete(nesting(EventID, Location, RegionCode, StationCode, Datetime, SampleDate, 
+                   Month, Jday, MethodCode, GearConditionCode,
                    WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
                    FlowDebris, SiteDisturbance, AlternateSite, 
                    Volume),
@@ -148,7 +152,8 @@ djfmp_all <- djfmp_catchlength %>%
           fill = list(CountAdj = 0, ForkLength = 0))
 
 # filter to cyprinids of interest only
-djfmp_cyprinids <- filter(djfmp_all, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT")) 
+djfmp_cyprinids <- filter(djfmp_all, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT",
+                                                        "COMCAR", "REDSHI", "GOLDSHI"))
 
 # original study filtered to gear condition 1 and removed all seines that did not match current SOP, we chose not to do that here
 
@@ -183,6 +188,21 @@ ybfmp_catchlength <- ybfmp_length_sum %>%
          ForkLength = case_when(is.na(ForkLength) ~ 0,
                                 TRUE ~ ForkLength))
 
+#################################################
+
+# fill in zeroes for all instances of fish not caught
+ybfmp_all <- ybfmp_catchlength %>% 
+  complete(nesting(EventID, Location, RegionCode, StationCode, Datetime, SampleDate, 
+                   Month, Jday, MethodCode, GearConditionCode,
+                   WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
+                   FlowDebris, SiteDisturbance, AlternateSite, 
+                   Volume),
+           IEPFishCode, 
+           fill = list(CountAdj = 0, ForkLength = 0))
+
+
+#################################################
+
 ### filter and clean --------------
 # beach seine only, add IEPFishCode to standardize with USFWS, add variables in DJFMP, select columns
 ybfmp_seine0 <- left_join(ybfmp_catchlength, ybfmp_wq0, by = "EventID") %>%
@@ -199,7 +219,8 @@ ybfmp_seine0 <- left_join(ybfmp_catchlength, ybfmp_wq0, by = "EventID") %>%
          SiteDisturbance = NA, 
          AlternateSite = NA,
         EventID = paste0("YBFMP_", EventID)) %>%
-  select(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, Jday, MethodCode, GearCode, GearConditionCode,
+  select(Location, RegionCode, EventID, StationCode, Datetime, SampleDate, Month, 
+         Jday, MethodCode, GearCode, GearConditionCode,
          WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
          FlowDebris, SiteDisturbance, AlternateSite, 
          Volume, IEPFishCode, ForkLength, CountAdj) 
@@ -222,13 +243,16 @@ ybfmp_seine <- ybfmp_seine0 %>%
   ## AL 2 & 4 sampled since 2010, AL 2 discontinued after 2017  
   ## BL6 sampled during 2015 & 2016 to help fill gap while unable to sample BL5 - keep
 
-stations_notincl_yb <- c("CCS1", "CCS2", "CCS3", "CCS4", "PCS", "FW1", "SB1", "LIHF", "RD22", "LIHFS", "YBI80", "SB2")
+stations_notincl_yb <- c("CCS1", "CCS2", "CCS3", "CCS4", "PCS", "FW1", "SB1", "LIHF", 
+                         "RD22", "LIHFS", "YBI80", "SB2")
 
 ybfmp_seine1 <- ybfmp_seine %>% 
   filter(!(StationCode %in% stations_notincl_yb))
 
 # filter to cyprinids of interest only
-ybfmp_cyprinids <- filter(ybfmp_seine1, IEPFishCode %in% c("SACSUC", "SACPIK", "SPLITT"))
+ybfmp_cyprinids <- filter(ybfmp_seine1, IEPFishCode %in% 
+                            c("SACSUC", "SACPIK", "SPLITT", "COMCAR", "REDSHI",
+                              "GOLDSHI"))
 summary(ybfmp_cyprinids)
 
 ## Combine -------
@@ -238,7 +262,10 @@ allfmp_catch0 <- bind_rows(djfmp_cyprinids, ybfmp_cyprinids) %>%
   filter(GearConditionCode<3) 
 
 # filter to 1995+
-allfm_catch <- allfmp_catch %>% filter(SampleDate > '1994-12-31')
+allfm_catch <- allfmp_catch0 %>% 
+  mutate(Year=lubridate::year(SampleDate),
+         Program=sub("(.*)_(.*)","\\1",EventID)) %>%  
+  filter(1995 <= Year & Year <= 2019)
 
 # Write --------
-saveRDS(allfmp_catch, "data_clean/seine_djfmp_ybfmp.rds")
+saveRDS(allfm_catch, "data_clean/seine_djfmp_ybfmp.rds")
