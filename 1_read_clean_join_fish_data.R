@@ -238,7 +238,7 @@ ybfmp_seine1 <- ybfmp_seine %>%
 # filter to cyprinids of interest only
 ybfmp_cyprinids <- filter(ybfmp_seine1, IEPFishCode %in% 
                             c("SACSUC", "SACPIK", "SPLITT", "COMCAR", "REDSHI",
-                              "GOLDSHI"))
+                              "GOLSHI"))
 summary(ybfmp_cyprinids)
 
 ## Combine -------
@@ -253,19 +253,6 @@ allfm_catch <- allfmp_catch0 %>%
          Program=sub("(.*)_(.*)","\\1",EventID)) %>%  
   filter(1995 <= Year & Year <= 2019)
 
-
-## It looks like the YBFMP didn't get the "tidyr::complete" treatment that DJFMP 
-## did, so golden shiner samples are lost during filtering on species in the 
-## "calculate indices" file. Use complete here at the end to handle this.
-allfm_catch_complete <- allfm_catch %>%
-  complete(nesting(EventID, Location, RegionCode, StationCode, Datetime, SampleDate, 
-                   Month, Jday, MethodCode, GearConditionCode,
-                   WeatherCode, DO, WaterTemp, Turbidity, Secchi, SpecificConductance, 
-                   FlowDebris, SiteDisturbance, AlternateSite, 
-                   Volume, GearCode, Year, Program),
-           IEPFishCode, 
-           fill = list(CountAdj = 0, ForkLength = 0))
-
-
 # Write --------
-saveRDS(allfm_catch_complete, "data_clean/seine_djfmp_ybfmp.rds")
+saveRDS(allfm_catch, "data_clean/seine_djfmp_ybfmp.rds")
+
