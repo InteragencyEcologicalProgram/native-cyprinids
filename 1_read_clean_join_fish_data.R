@@ -235,10 +235,14 @@ stations_notincl_yb <- c("YB", "CCS1", "CCS2", "CCS3", "CCS4", "PCS", "FW1", "SB
 ybfmp_seine1 <- ybfmp_seine %>% 
   filter(!(StationCode %in% stations_notincl_yb))
 
+#rename GOLSHI to GOLDSHI to match DJFMP
+ybfmp_seine1$IEPFishCode[ybfmp_seine1$IEPFishCode=="GOLSHI"] <- "GOLDSHI"
+
+
 # filter to cyprinids of interest only
 ybfmp_cyprinids <- filter(ybfmp_seine1, IEPFishCode %in% 
                             c("SACSUC", "SACPIK", "SPLITT", "COMCAR", "REDSHI",
-                              "GOLSHI"))
+                              "GOLDSHI"))
 summary(ybfmp_cyprinids)
 
 ## Combine -------
