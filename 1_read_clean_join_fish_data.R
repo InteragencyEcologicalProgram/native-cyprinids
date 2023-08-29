@@ -218,18 +218,18 @@ ybfmp_seine <- ybfmp_seine0 %>%
   filter(!(GearCode %in% gear_notincl_yb))
 
 # Filter sites 
-  ## LIS - total of 137 samples, discontinued after 2012
-  ## YB - total of 275 samples, fairly consistent until 2017
+  ## LIS - total of 137 samples, discontinued after 2012 - keep
+  ## YB - total of 275 samples, fairly consistent until 2017 but not connected to system unless flooded - remove
   ## CCS - Cache Slough - remove
   ## PCS - only 9 total samples, possibly BL1 recorded incorrectly - remove
   ## FW1, SB1, LIHF, RD22, LIHFS, YBI80, SB2 - all inundation sites not regularly sampled - remove
   ## BL 1, 2, 4 and AL 1 sampled since 1998 - keep
-  ## BL 3 & 5 sampled since 2007
-  ## AL 3 sampled since 2005
-  ## AL 2 & 4 sampled since 2010, AL 2 discontinued after 2017  
+  ## BL 3 & 5 sampled since 2007 - keep
+  ## AL 3 sampled since 2005 - keep
+  ## AL 2 & 4 sampled since 2010, AL 2 discontinued after 2017 - keep
   ## BL6 sampled during 2015 & 2016 to help fill gap while unable to sample BL5 - keep
 
-stations_notincl_yb <- c("CCS1", "CCS2", "CCS3", "CCS4", "PCS", "FW1", "SB1", "LIHF", 
+stations_notincl_yb <- c("YB", "CCS1", "CCS2", "CCS3", "CCS4", "PCS", "FW1", "SB1", "LIHF", 
                          "RD22", "LIHFS", "YBI80", "SB2")
 
 ybfmp_seine1 <- ybfmp_seine %>% 
