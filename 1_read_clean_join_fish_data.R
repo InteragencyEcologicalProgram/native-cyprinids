@@ -256,3 +256,21 @@ allfm_catch <- allfmp_catch0 %>%
 # Write --------
 saveRDS(allfm_catch, "data_clean/seine_djfmp_ybfmp.rds")
 
+
+
+
+# Save unique sites for calculating river km --------
+uniq_sites <- allfm_catch %>%
+  dplyr::distinct(Program,StationCode)
+
+sites0_latlong <- rbind(djfmp_sites0 %>% 
+                          dplyr::select(StationCode, Latitude, Longitude),
+                        ybfmp_sites0 %>% 
+                          dplyr::select(StationCode, Latitude, Longitude))
+
+uniq_sites <- uniq_sites %>%
+  dplyr::left_join(sites0_latlong, by="StationCode")
+
+write.csv(uniq_sites, "data_clean/unique_sites.csv", row.names=FALSE)
+
+
