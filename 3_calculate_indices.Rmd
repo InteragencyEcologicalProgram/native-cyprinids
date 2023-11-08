@@ -9,7 +9,7 @@ knit: (function(input, ...) {
     rmarkdown::render(
       input,
       output_dir="Figures")
-    })  
+  }) 
 ---
 # Load packages
 ```{r setup, include=FALSE}
@@ -360,7 +360,7 @@ dev.off()
 
 # Calculate Regional and System Wide Indices
 
-```{r}
+```{r warning=FALSE}
 
 calculateIndices <- function(dat) {
   ## Require that all selected months be present to have a non-missing index.
@@ -447,10 +447,15 @@ dev.off()
 # Environmental covariate time periods, based on 25-75th percentile of spawning window:
 
 Sacramento Pikeminnow:      May  1 - June 30
+
 Splittail:             February 22 - June  8
+
 Sacramento sucker:        March 10 -  May 23
+
 Common Carp:              April 30 - June 30
+
 Red Shiner:                 May  9 - July 24
+
 Golden Shiner:            April 30 - June 30
 
 ```{r}
@@ -770,7 +775,7 @@ GOLDSHI_final <- dplyr::left_join(GOLDSHI_Index_Final,
 
 # Plots
 
-```{r fig.height=6}
+```{r fig.height=6, warning=FALSE}
 
 plot_corr <- function(dat, species, region) {
   stopifnot(region %in% c("Delta","Liberty Island","Yolo","Sacramento","San Joaquin"))
