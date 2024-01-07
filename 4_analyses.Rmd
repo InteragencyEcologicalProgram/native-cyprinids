@@ -1,0 +1,966 @@
+---
+title: "Analyses"
+date: "2023-10-18"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir="Figures")
+  })
+---
+
+# Load packages
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyr)
+library(Kendall)
+library(trend)
+library(psych)
+library(mgcv)
+library(MuMIn)
+library(pls)
+
+out_root <- file.path("output","models_abundance_index")
+```
+
+# Load final data sets created by 3_calculate_indices.Rmd
+
+```{r}
+
+SACPIK_final <- read.csv(file.path("output","index_and_center_of_distn",
+                                   "SACPIK_index.csv"))
+SPLITT_final <- read.csv(file.path("output","index_and_center_of_distn",
+                                   "SPLITT_index.csv"))
+SACSUC_final <- read.csv(file.path("output","index_and_center_of_distn",
+                                   "SACSUC_index.csv"))
+COMCAR_final <- read.csv(file.path("output","index_and_center_of_distn",
+                                   "COMCAR_index.csv"))
+GOLDSHI_final <- read.csv(file.path("output","index_and_center_of_distn",
+                                    "GOLDSHI_index.csv"))
+
+```
+
+# Temporal trends
+
+```{r temporal-trends}
+
+creat_acf_plots <- function(dat, title="") {
+  par(mfrow=c(2,3), mar=c(2.5, 2.5, 4.5, 2.5), omi=c(0, 0, 0.3, 0))
+  for(field_str in c("Index_Sac","Index_Yolo","Index_LI",
+                     "Index_Delta","Index_SJ","Index_Watershed")) {
+    if(any(is.na(dat[ ,field_str]))) {
+      plot(0, 0, pch=NA, main=field_str)
+    } else {
+      acf(dat[ ,field_str], main=field_str)
+    }
+  }
+  mtext(title, outer=TRUE)
+}
+
+## SACPIK:
+creat_acf_plots(SACPIK_final, "SACPIK")
+Kendall::MannKendall(SACPIK_final$Index_Sac)
+# tau = 0.333, 2-sided pvalue =0.02077
+# trend
+trend::pettitt.test(SACPIK_final$Index_Sac)
+# U* = 96, p-value = 0.06656; no change point
+
+Kendall::MannKendall(SACPIK_final$Index_Delta)
+# tau = -0.127, 2-sided pvalue =0.38751
+# No trend
+
+
+
+## SPLITT:
+creat_acf_plots(SPLITT_final, "SPLITT")
+Kendall::MannKendall(SPLITT_final$Index_Sac)
+# tau = 0.413, 2-sided pvalue =0.0040703
+# trend
+trend::pettitt.test(SPLITT_final$Index_Sac)
+# U* = 100, p-value = 0.04983; no change point
+
+Kendall::MannKendall(SPLITT_final$Index_Delta)
+# tau = 0.04, 2-sided pvalue =0.79725
+# No trend
+Kendall::MannKendall(SPLITT_final$Index_SJ)
+# tau = -0.0333, 2-sided pvalue =0.83352
+# No trend
+
+
+
+## SACSUC:
+creat_acf_plots(SACSUC_final, "SACSUC")
+Kendall::MannKendall(SACSUC_final$Index_Sac)   # possible autocorrelation
+# tau = 0.46, 2-sided pvalue =0.001376
+# trend
+trend::pettitt.test(SACSUC_final$Index_Sac)
+# U* = 138, p-value = 0.001767; change point at time 12
+
+Kendall::MannKendall(SACSUC_final$Index_Delta)
+# tau = 0.447, 2-sided pvalue =0.0018951
+# trend
+trend::pettitt.test(SACSUC_final$Index_Delta)
+# U* = 120, p-value = 0.009816; change point at time 10
+
+Kendall::MannKendall(SACSUC_final$Index_SJ)
+# tau = 0.113, 2-sided pvalue =0.44088
+# No trend
+
+
+
+## COMCAR:
+creat_acf_plots(COMCAR_final, "COMCAR")
+Kendall::MannKendall(COMCAR_final$Index_Sac)
+# tau = 0.177, 2-sided pvalue =0.22445
+# No trend
+Kendall::MannKendall(COMCAR_final$Index_Delta)
+# tau = -0.028, 2-sided pvalue =0.87687
+# No trend
+Kendall::MannKendall(COMCAR_final$Index_SJ)   # possible autocorrelation
+# tau = 0.0426, 2-sided pvalue =0.79209
+# No trend
+
+
+
+## GOLDSHI:
+creat_acf_plots(GOLDSHI_final, "GOLDSHI")
+Kendall::MannKendall(GOLDSHI_final$Index_Sac)
+# tau = 0.24, 2-sided pvalue =0.097277
+# No trend
+Kendall::MannKendall(GOLDSHI_final$Index_Delta)   # possible autocorrelation
+# tau = 0.327, 2-sided pvalue =0.023486
+# trend
+trend::pettitt.test(GOLDSHI_final$Index_Delta)
+# U* = 90, p-value = 0.1005; change point at time 9
+
+```
+
+# Juvenile index regressions
+
+Patterns in some residuals. Higher order terms or additional covariates needed?
+
+```{r }
+
+addStandardizedCovariates <- function(x) {
+  all_names <- names(x)
+  covar_names <- all_names[grepl("^MeanFlow|FlowTiming|MeanWT", all_names)]
+  
+  for(this_col in covar_names) {
+    x[ ,paste0(this_col,"_stnd")] <- c(scale(x[ ,this_col]))
+  }
+  return(x)
+}
+
+do_PCA <- function(dat) {
+  dat_tmp <- dat %>%
+    dplyr::select(tidyselect::ends_with("_stnd"))
+  stopifnot(ncol(dat_tmp) == 3)
+  stopifnot(grepl("^MeanFlow_", names(dat_tmp)[1]) && 
+            grepl("^FlowTiming_", names(dat_tmp)[2]) && 
+            grepl("^MeanWT_", names(dat_tmp)[3]))
+  PCA <- psych::principal(as.matrix(dat_tmp), nfactors=3, rotate="none")
+  PC_df <- as.data.frame(PCA$scores)
+
+  ret <- list("PCA"=PCA, "dat"=dplyr::bind_cols(dat, PC_df))
+  return(ret)
+}
+
+format_PCA <- function(pca) {
+  ret <- rbind(pca$weights, matrix(NA, nrow=1, ncol=3), pca$Vaccounted)
+  ret <- as.data.frame(ret)
+  ret <- dplyr::mutate(ret, Name=row.names(ret), .before=PC1)
+  ret <- dplyr::mutate(ret, Spacer="")
+  row.names(ret) <- NULL
+  
+  return(ret)
+}
+
+my_cor <- function(x, y) {
+  text(mean(x), mean(y), paste0("corr = ",round(cor(x,y), digits=2)))
+}
+
+get_adjRsq <- function(x) {
+  s <- summary(x)
+  c(adjRsq=s$adj.r.squared)
+}
+
+## 1) Subset to remove years with missing indices or covariates.
+## 2) Calculate standardized covariates.
+## 3) Calculate principal components to handle collinearity.
+
+
+## SACPIK
+
+## Sacramento
+
+SACPIK_tmp_Sac <- SACPIK_final %>%
+  dplyr::select(Year, Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
+                MeanWT_Sac) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SACPIK_tmp_Sac <- do_PCA(SACPIK_tmp_Sac)
+SACPIK_PCA_Sac <- SACPIK_tmp_Sac$PCA
+SACPIK_PCA_Sac
+SACPIK_model_data_Sac <- SACPIK_tmp_Sac$dat
+
+nrow(SACPIK_final)
+nrow(SACPIK_model_data_Sac)
+
+pairs(SACPIK_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+pairs(SACPIK_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
+                      MeanWT_Sac),
+      upper.panel=my_cor)
+
+summary(lm(log_Index_Sac ~ MeanFlow_Sac, data=SACPIK_model_data_Sac, 
+           na.action="na.fail"))
+summary(lm(log_Index_Sac ~ FlowTiming_Sac, data=SACPIK_model_data_Sac, 
+           na.action="na.fail"))
+summary(lm(log_Index_Sac ~ MeanWT_Sac, data=SACPIK_model_data_Sac, 
+           na.action="na.fail"))
+
+fit_SACPIK_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
+                            data=SACPIK_model_data_Sac, na.action="na.fail")
+summary(fit_SACPIK_global_Sac)
+par(mfrow=c(2,3)); plot(fit_SACPIK_global_Sac)
+acf(fit_SACPIK_global_Sac$residuals)
+acf(SACPIK_model_data_Sac$log_Index_Sac)
+
+# dredge_SACPIK_Sac <- MuMIn::dredge(fit_SACPIK_global_Sac, extra=list("R^2", get_adjRsq))
+# dredge_SACPIK_Sac
+# MuMIn::sw(dredge_SACPIK_Sac)
+# 
+# fit_SACPIK_Sac_final <- lm(log_Index_Sac ~ PC3, data=SACPIK_model_data_Sac, 
+#                            na.action="na.fail")
+# summary(fit_SACPIK_Sac_final)
+# par(mfrow=c(2,3)); plot(fit_SACPIK_Sac_final)
+# acf(fit_SACPIK_Sac_final$residuals)
+
+
+# # Model averaged coefficients
+# # Going to get a 95% confidence set
+# modelavg_SACPIK_Sac <- MuMIn::model.avg(dredge_SACPIK_Sac, 
+#                                         cumsum(weight) <= .95, 
+#                                         rank="AIC")
+# summary(modelavg_SACPIK_Sac)
+
+
+# pcr_model <- pls::pcr(log_Index_Sac ~ MeanFlow_Sac_stnd + FlowTiming_Sac_stnd + 
+#                         MeanWT_Sac_stnd, data=SACPIK_model_data_Sac, validation="CV")
+# summary(pcr_model)
+# pls::validationplot(pcr_model, val.type="RMSEP", cex.axis=0.7)
+# axis(side = 1, at = c(8), cex.axis=0.7)
+# abline(v = 8, col = "blue", lty = 3)
+
+
+
+
+## Delta
+
+SACPIK_tmp_Delta <- SACPIK_final %>%
+  dplyr::select(Year, Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                MeanWT_Delta) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SACPIK_tmp_Delta <- do_PCA(SACPIK_tmp_Delta)
+SACPIK_PCA_Delta <- SACPIK_tmp_Delta$PCA
+SACPIK_PCA_Delta
+SACPIK_model_data_Delta <- SACPIK_tmp_Delta$dat
+
+nrow(SACPIK_final)
+nrow(SACPIK_model_data_Delta)
+
+pairs(SACPIK_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SACPIK_global_Delta <- lm(log_Index_Delta ~ PC1  + PC2 + PC3, 
+                              data=SACPIK_model_data_Delta, na.action="na.fail")
+summary(fit_SACPIK_global_Delta)
+par(mfrow=c(2,3)); plot(fit_SACPIK_global_Delta)
+acf(fit_SACPIK_global_Delta$residuals)
+acf(SACPIK_model_data_Delta$log_Index_Delta)
+
+
+
+## San Joaquin
+
+SACPIK_tmp_SJ <- SACPIK_final %>%
+  dplyr::select(Year, Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, MeanWT_SJ) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SACPIK_tmp_SJ <- do_PCA(SACPIK_tmp_SJ)
+SACPIK_PCA_SJ <- SACPIK_tmp_SJ$PCA
+SACPIK_PCA_SJ
+SACPIK_model_data_SJ <- SACPIK_tmp_SJ$dat
+
+nrow(SACPIK_final)
+nrow(SACPIK_model_data_SJ)
+
+pairs(SACPIK_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SACPIK_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
+                            data=SACPIK_model_data_SJ, na.action="na.fail")
+summary(fit_SACPIK_global_SJ)
+par(mfrow=c(2,3)); plot(fit_SACPIK_global_SJ)
+acf(fit_SACPIK_global_SJ$residuals)
+acf(SACPIK_model_data_SJ$log_Index_SJ)
+
+
+
+## Liberty Island
+## Too few data points.
+
+## Use Yolo flow for Liberty Island???
+tmp <- SACPIK_final %>%
+       dplyr::select(Year, Index_LI, log_Index_LI,
+                     MeanFlow_Yolo, FlowTiming_Yolo, MeanWT_LI) %>%
+       tidyr::drop_na()
+nrow(SACPIK_final)
+nrow(tmp)
+
+
+
+## Yolo
+## Too few data points.
+
+tmp <- SACPIK_final %>%
+       dplyr::select(Year, Index_Yolo, log_Index_Yolo,
+                     MeanFlow_Yolo, FlowTiming_Yolo, MeanWT_Yolo) %>%
+       tidyr::drop_na()
+nrow(SACPIK_final)
+nrow(tmp)
+
+
+
+## Save model data:
+write.csv(SACPIK_model_data_Sac, file.path(out_root,"SACPIK_model_data_Sac.csv"), 
+          row.names=FALSE)
+write.csv(SACPIK_model_data_Delta, file.path(out_root,"SACPIK_model_data_Delta.csv"), 
+          row.names=FALSE)
+write.csv(SACPIK_model_data_SJ, file.path(out_root,"SACPIK_model_data_SJ.csv"), 
+          row.names=FALSE)
+
+SACPIK_PCA_compiled <- cbind(format_PCA(SACPIK_PCA_Sac), 
+                             format_PCA(SACPIK_PCA_Delta), 
+                             format_PCA(SACPIK_PCA_SJ))
+write.csv(SACPIK_PCA_compiled, file.path(out_root,"SACPIK_PCA_compiled.csv"), na="", 
+          row.names=FALSE)
+
+```
+
+
+```{r }
+
+## SPLITT
+
+## Sacramento
+
+SPLITT_tmp_Sac <- SPLITT_final %>%
+  dplyr::select(Year, Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
+                MeanWT_Sac) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SPLITT_tmp_Sac <- do_PCA(SPLITT_tmp_Sac)
+SPLITT_PCA_Sac <- SPLITT_tmp_Sac$PCA
+SPLITT_PCA_Sac
+SPLITT_model_data_Sac <- SPLITT_tmp_Sac$dat
+
+nrow(SPLITT_final)
+nrow(SPLITT_model_data_Sac)
+
+pairs(SPLITT_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SPLITT_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
+                            data=SPLITT_model_data_Sac, na.action="na.fail")
+summary(fit_SPLITT_global_Sac)
+par(mfrow=c(2,3)); plot(fit_SPLITT_global_Sac)
+acf(fit_SPLITT_global_Sac$residuals)
+acf(SPLITT_model_data_Sac$log_Index_Sac)
+
+
+
+## Delta
+
+SPLITT_tmp_Delta <- SPLITT_final %>%
+  dplyr::select(Year, Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                MeanWT_Delta) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SPLITT_tmp_Delta <- do_PCA(SPLITT_tmp_Delta)
+SPLITT_PCA_Delta <- SPLITT_tmp_Delta$PCA
+SPLITT_PCA_Delta
+SPLITT_model_data_Delta <- SPLITT_tmp_Delta$dat
+
+nrow(SPLITT_final)
+nrow(SPLITT_model_data_Delta)
+
+pairs(SPLITT_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SPLITT_global_Delta <- lm(log_Index_Delta ~ PC1 + PC2 + PC3, 
+                            data=SPLITT_model_data_Delta, na.action="na.fail")
+summary(fit_SPLITT_global_Delta)
+par(mfrow=c(2,3)); plot(fit_SPLITT_global_Delta)
+acf(fit_SPLITT_global_Delta$residuals)
+acf(SPLITT_model_data_Delta$log_Index_Delta)
+
+
+
+## San Joaquin
+
+SPLITT_tmp_SJ <- SPLITT_final %>%
+  dplyr::select(Year, Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, MeanWT_SJ) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SPLITT_tmp_SJ <- do_PCA(SPLITT_tmp_SJ)
+SPLITT_PCA_SJ <- SPLITT_tmp_SJ$PCA
+SPLITT_PCA_SJ
+SPLITT_model_data_SJ <- SPLITT_tmp_SJ$dat
+
+nrow(SPLITT_final)
+nrow(SPLITT_model_data_SJ)
+
+pairs(SPLITT_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SPLITT_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
+                            data=SPLITT_model_data_SJ, na.action="na.fail")
+summary(fit_SPLITT_global_SJ)
+par(mfrow=c(2,3)); plot(fit_SPLITT_global_SJ)
+acf(fit_SPLITT_global_SJ$residuals)
+acf(SPLITT_model_data_SJ$log_Index_SJ)
+
+
+
+## Liberty Island
+
+SPLITT_tmp_LI <- SPLITT_final %>%
+  dplyr::select(Year, Index_LI, log_Index_LI, MeanFlow_Yolo, FlowTiming_Yolo, 
+                MeanWT_LI) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SPLITT_tmp_LI <- do_PCA(SPLITT_tmp_LI)
+SPLITT_PCA_LI <- SPLITT_tmp_LI$PCA
+SPLITT_PCA_LI
+SPLITT_model_data_LI <- SPLITT_tmp_LI$dat
+
+nrow(SPLITT_final)
+nrow(SPLITT_model_data_LI)
+
+pairs(SPLITT_model_data_LI %>%
+        dplyr::select(Index_LI, log_Index_LI, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SPLITT_global_LI <- lm(log_Index_LI ~ PC1 + PC2 + PC3, 
+                            data=SPLITT_model_data_LI, na.action="na.fail")
+summary(fit_SPLITT_global_LI)
+par(mfrow=c(2,3)); plot(fit_SPLITT_global_LI)
+acf(fit_SPLITT_global_LI$residuals)
+acf(SPLITT_model_data_LI$log_Index_LI)
+
+
+
+## Yolo
+
+SPLITT_tmp_Yolo <- SPLITT_final %>%
+  dplyr::select(Year, Index_Yolo, log_Index_Yolo, MeanFlow_Yolo, FlowTiming_Yolo, 
+                MeanWT_Yolo) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SPLITT_tmp_Yolo <- do_PCA(SPLITT_tmp_Yolo)
+SPLITT_PCA_Yolo <- SPLITT_tmp_Yolo$PCA
+SPLITT_PCA_Yolo
+SPLITT_model_data_Yolo <- SPLITT_tmp_Yolo$dat
+
+nrow(SPLITT_final)
+nrow(SPLITT_model_data_Yolo)
+
+pairs(SPLITT_model_data_Yolo %>%
+        dplyr::select(Index_Yolo, log_Index_Yolo, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SPLITT_global_Yolo <- lm(log_Index_Yolo ~ PC1 + PC2 + PC3, 
+                            data=SPLITT_model_data_Yolo, na.action="na.fail")
+summary(fit_SPLITT_global_Yolo)
+par(mfrow=c(2,3)); plot(fit_SPLITT_global_Yolo)
+acf(fit_SPLITT_global_Yolo$residuals)
+acf(SPLITT_model_data_Yolo$log_Index_Yolo)
+
+
+## Save model data:
+write.csv(SPLITT_model_data_Sac, file.path(out_root,"SPLITT_model_data_Sac.csv"), 
+          row.names=FALSE)
+write.csv(SPLITT_model_data_Delta, file.path(out_root,"SPLITT_model_data_Delta.csv"), 
+          row.names=FALSE)
+write.csv(SPLITT_model_data_SJ, file.path(out_root,"SPLITT_model_data_SJ.csv"), 
+          row.names=FALSE)
+write.csv(SPLITT_model_data_LI, file.path(out_root,"SPLITT_model_data_LI.csv"), 
+          row.names=FALSE)
+write.csv(SPLITT_model_data_Yolo, file.path(out_root,"SPLITT_model_data_Yolo.csv"), 
+          row.names=FALSE)
+
+SPLITT_PCA_compiled <- cbind(format_PCA(SPLITT_PCA_Sac), 
+                             format_PCA(SPLITT_PCA_Delta), 
+                             format_PCA(SPLITT_PCA_SJ),
+                             format_PCA(SPLITT_PCA_LI),
+                             format_PCA(SPLITT_PCA_Yolo))
+write.csv(SPLITT_PCA_compiled, file.path(out_root,"SPLITT_PCA_compiled.csv"), na="", 
+          row.names=FALSE)
+
+```
+
+
+```{r }
+
+## SACSUC
+
+## Sacramento
+
+SACSUC_tmp_Sac <- SACSUC_final %>%
+  dplyr::select(Year, Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
+                MeanWT_Sac) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SACSUC_tmp_Sac <- do_PCA(SACSUC_tmp_Sac)
+SACSUC_PCA_Sac <- SACSUC_tmp_Sac$PCA
+SACSUC_PCA_Sac
+SACSUC_model_data_Sac <- SACSUC_tmp_Sac$dat
+
+nrow(SACSUC_final)
+nrow(SACSUC_model_data_Sac)
+
+pairs(SACSUC_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SACSUC_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
+                            data=SACSUC_model_data_Sac, na.action="na.fail")
+summary(fit_SACSUC_global_Sac)
+par(mfrow=c(2,3)); plot(fit_SACSUC_global_Sac)
+acf(fit_SACSUC_global_Sac$residuals)
+acf(SACSUC_model_data_Sac$log_Index_Sac)
+
+
+
+## Delta
+
+SACSUC_tmp_Delta <- SACSUC_final %>%
+  dplyr::select(Year, Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                MeanWT_Delta) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SACSUC_tmp_Delta <- do_PCA(SACSUC_tmp_Delta)
+SACSUC_PCA_Delta <- SACSUC_tmp_Delta$PCA
+SACSUC_PCA_Delta
+SACSUC_model_data_Delta <- SACSUC_tmp_Delta$dat
+
+nrow(SACSUC_final)
+nrow(SACSUC_model_data_Delta)
+
+pairs(SACSUC_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SACSUC_global_Delta <- lm(log_Index_Delta ~ PC1 + PC2 + PC3, 
+                            data=SACSUC_model_data_Delta, na.action="na.fail")
+summary(fit_SACSUC_global_Delta)
+par(mfrow=c(2,3)); plot(fit_SACSUC_global_Delta)
+acf(fit_SACSUC_global_Delta$residuals)
+acf(SACSUC_model_data_Delta$log_Index_Delta)
+
+
+
+## San Joaquin
+
+SACSUC_tmp_SJ <- SACSUC_final %>%
+  dplyr::select(Year, Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, MeanWT_SJ) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SACSUC_tmp_SJ <- do_PCA(SACSUC_tmp_SJ)
+SACSUC_PCA_SJ <- SACSUC_tmp_SJ$PCA
+SACSUC_PCA_SJ
+SACSUC_model_data_SJ <- SACSUC_tmp_SJ$dat
+
+nrow(SACSUC_final)
+nrow(SACSUC_model_data_SJ)
+
+pairs(SACSUC_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SACSUC_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
+                            data=SACSUC_model_data_SJ, na.action="na.fail")
+summary(fit_SACSUC_global_SJ)
+par(mfrow=c(2,3)); plot(fit_SACSUC_global_SJ)
+acf(fit_SACSUC_global_SJ$residuals)
+acf(SACSUC_model_data_SJ$log_Index_SJ)
+
+
+
+## Liberty Island
+
+## Too few data points.
+
+SACSUC_tmp_LI <- SACSUC_final %>%
+       dplyr::select(Year, Index_LI, log_Index_LI, MeanFlow_Yolo, FlowTiming_Yolo, 
+                     MeanWT_LI) %>%
+       tidyr::drop_na()
+nrow(SACSUC_final)
+nrow(SACSUC_tmp_LI)
+
+
+
+## Yolo
+
+SACSUC_tmp_Yolo <- SACSUC_final %>%
+  dplyr::select(Year, Index_Yolo, log_Index_Yolo, MeanFlow_Yolo, FlowTiming_Yolo, 
+                MeanWT_Yolo) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+SACSUC_tmp_Yolo <- do_PCA(SACSUC_tmp_Yolo)
+SACSUC_PCA_Yolo <- SACSUC_tmp_Yolo$PCA
+SACSUC_PCA_Yolo
+SACSUC_model_data_Yolo <- SACSUC_tmp_Yolo$dat
+
+nrow(SACSUC_final)
+nrow(SACSUC_model_data_Yolo)
+
+pairs(SACSUC_model_data_Yolo %>%
+        dplyr::select(Index_Yolo, log_Index_Yolo, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_SACSUC_global_Yolo <- lm(log_Index_Yolo ~ PC1 + PC2 + PC3, 
+                            data=SACSUC_model_data_Yolo, na.action="na.fail")
+summary(fit_SACSUC_global_Yolo)
+par(mfrow=c(2,3)); plot(fit_SACSUC_global_Yolo)
+acf(fit_SACSUC_global_Yolo$residuals)
+acf(SACSUC_model_data_Yolo$log_Index_Yolo)
+
+
+## Save model data:
+write.csv(SACSUC_model_data_Sac, file.path(out_root,"SACSUC_model_data_Sac.csv"), 
+          row.names=FALSE)
+write.csv(SACSUC_model_data_Delta, file.path(out_root,"SACSUC_model_data_Delta.csv"), 
+          row.names=FALSE)
+write.csv(SACSUC_model_data_SJ, file.path(out_root,"SACSUC_model_data_SJ.csv"), 
+          row.names=FALSE)
+write.csv(SACSUC_model_data_Yolo, file.path(out_root,"SACSUC_model_data_Yolo.csv"), 
+          row.names=FALSE)
+
+SACSUC_PCA_compiled <- cbind(format_PCA(SACSUC_PCA_Sac), 
+                             format_PCA(SACSUC_PCA_Delta), 
+                             format_PCA(SACSUC_PCA_SJ),
+                             format_PCA(SACSUC_PCA_Yolo))
+write.csv(SACSUC_PCA_compiled, file.path(out_root,"SACSUC_PCA_compiled.csv"), na="", 
+          row.names=FALSE)
+
+```
+
+
+```{r }
+
+## COMCAR
+
+## Sacramento
+
+COMCAR_tmp_Sac <- COMCAR_final %>%
+  dplyr::select(Year, Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, MeanWT_Sac) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+COMCAR_tmp_Sac <- do_PCA(COMCAR_tmp_Sac)
+COMCAR_PCA_Sac <- COMCAR_tmp_Sac$PCA
+COMCAR_PCA_Sac
+COMCAR_model_data_Sac <- COMCAR_tmp_Sac$dat
+
+nrow(COMCAR_final)
+nrow(COMCAR_model_data_Sac)
+
+pairs(COMCAR_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_COMCAR_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
+                            data=COMCAR_model_data_Sac, na.action="na.fail")
+summary(fit_COMCAR_global_Sac)
+par(mfrow=c(2,3)); plot(fit_COMCAR_global_Sac)
+acf(fit_COMCAR_global_Sac$residuals)
+acf(COMCAR_model_data_Sac$log_Index_Sac)
+
+
+
+## Delta
+
+COMCAR_tmp_Delta <- COMCAR_final %>%
+  dplyr::select(Year, Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                MeanWT_Delta) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+COMCAR_tmp_Delta <- do_PCA(COMCAR_tmp_Delta)
+COMCAR_PCA_Delta <- COMCAR_tmp_Delta$PCA
+COMCAR_PCA_Delta
+COMCAR_model_data_Delta <- COMCAR_tmp_Delta$dat
+
+nrow(COMCAR_final)
+nrow(COMCAR_model_data_Delta)
+
+pairs(COMCAR_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_COMCAR_global_Delta <- lm(log_Index_Delta ~ PC1 + PC2 + PC3, 
+                            data=COMCAR_model_data_Delta, na.action="na.fail")
+summary(fit_COMCAR_global_Delta)
+par(mfrow=c(2,3)); plot(fit_COMCAR_global_Delta)
+acf(fit_COMCAR_global_Delta$residuals)
+acf(COMCAR_model_data_Delta$log_Index_Delta)
+
+
+
+## San Joaquin
+
+COMCAR_tmp_SJ <- COMCAR_final %>%
+  dplyr::select(Year, Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, MeanWT_SJ) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+COMCAR_tmp_SJ <- do_PCA(COMCAR_tmp_SJ)
+COMCAR_PCA_SJ <- COMCAR_tmp_SJ$PCA
+COMCAR_PCA_SJ
+COMCAR_model_data_SJ <- COMCAR_tmp_SJ$dat
+
+nrow(COMCAR_final)
+nrow(COMCAR_model_data_SJ)
+
+pairs(COMCAR_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_COMCAR_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
+                            data=COMCAR_model_data_SJ, na.action="na.fail")
+summary(fit_COMCAR_global_SJ)
+par(mfrow=c(2,3)); plot(fit_COMCAR_global_SJ)
+acf(fit_COMCAR_global_SJ$residuals)
+acf(COMCAR_model_data_SJ$log_Index_SJ)
+
+
+
+## Liberty Island
+
+## Too few data points.
+
+COMCAR_tmp_LI <- COMCAR_final %>%
+       dplyr::select(Year, Index_LI, log_Index_LI, MeanFlow_Yolo, FlowTiming_Yolo, 
+                     MeanWT_LI) %>%
+       tidyr::drop_na()
+nrow(COMCAR_final)
+nrow(COMCAR_tmp_LI)
+
+
+
+
+## Yolo
+
+COMCAR_tmp_Yolo <- COMCAR_final %>%
+  dplyr::select(Year, Index_Yolo, log_Index_Yolo, MeanFlow_Yolo, FlowTiming_Yolo, 
+                MeanWT_Yolo) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+COMCAR_tmp_Yolo <- do_PCA(COMCAR_tmp_Yolo)
+COMCAR_PCA_Yolo <- COMCAR_tmp_Yolo$PCA
+COMCAR_PCA_Yolo
+COMCAR_model_data_Yolo <- COMCAR_tmp_Yolo$dat
+
+nrow(COMCAR_final)
+nrow(COMCAR_model_data_Yolo)
+
+pairs(COMCAR_model_data_Yolo %>%
+        dplyr::select(Index_Yolo, log_Index_Yolo, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_COMCAR_global_Yolo <- lm(log_Index_Yolo ~ PC1 + PC2 + PC3, 
+                            data=COMCAR_model_data_Yolo, na.action="na.fail")
+summary(fit_COMCAR_global_Yolo)
+par(mfrow=c(2,3)); plot(fit_COMCAR_global_Yolo)
+acf(fit_COMCAR_global_Yolo$residuals)
+acf(COMCAR_model_data_Yolo$log_Index_Yolo)
+
+
+## Save model data:
+write.csv(COMCAR_model_data_Sac, file.path(out_root,"COMCAR_model_data_Sac.csv"), 
+          row.names=FALSE)
+write.csv(COMCAR_model_data_Delta, file.path(out_root,"COMCAR_model_data_Delta.csv"), 
+          row.names=FALSE)
+write.csv(COMCAR_model_data_SJ, file.path(out_root,"COMCAR_model_data_SJ.csv"), 
+          row.names=FALSE)
+write.csv(COMCAR_model_data_Yolo, file.path(out_root,"COMCAR_model_data_Yolo.csv"), 
+          row.names=FALSE)
+
+COMCAR_PCA_compiled <- cbind(format_PCA(COMCAR_PCA_Sac), 
+                             format_PCA(COMCAR_PCA_Delta), 
+                             format_PCA(COMCAR_PCA_SJ),
+                             format_PCA(COMCAR_PCA_Yolo))
+write.csv(COMCAR_PCA_compiled, file.path(out_root,"COMCAR_PCA_compiled.csv"), na="", 
+          row.names=FALSE)
+
+```
+
+
+```{r }
+
+## GOLDSHI
+
+## Sacramento
+
+GOLDSHI_tmp_Sac <- GOLDSHI_final %>%
+  dplyr::select(Year, Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
+                MeanWT_Sac) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+GOLDSHI_tmp_Sac <- do_PCA(GOLDSHI_tmp_Sac)
+GOLDSHI_PCA_Sac <- GOLDSHI_tmp_Sac$PCA
+GOLDSHI_PCA_Sac
+GOLDSHI_model_data_Sac <- GOLDSHI_tmp_Sac$dat
+
+nrow(GOLDSHI_final)
+nrow(GOLDSHI_model_data_Sac)
+
+pairs(GOLDSHI_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_GOLDSHI_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
+                            data=GOLDSHI_model_data_Sac, na.action="na.fail")
+summary(fit_GOLDSHI_global_Sac)
+par(mfrow=c(2,3)); plot(fit_GOLDSHI_global_Sac)
+acf(fit_GOLDSHI_global_Sac$residuals)
+acf(GOLDSHI_model_data_Sac$log_Index_Sac)
+
+
+
+## Delta
+
+GOLDSHI_tmp_Delta <- GOLDSHI_final %>%
+  dplyr::select(Year, Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                MeanWT_Delta) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+GOLDSHI_tmp_Delta <- do_PCA(GOLDSHI_tmp_Delta)
+GOLDSHI_PCA_Delta <- GOLDSHI_tmp_Delta$PCA
+GOLDSHI_PCA_Delta
+GOLDSHI_model_data_Delta <- GOLDSHI_tmp_Delta$dat
+
+nrow(GOLDSHI_final)
+nrow(GOLDSHI_model_data_Delta)
+
+pairs(GOLDSHI_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_GOLDSHI_global_Delta <- lm(log_Index_Delta ~ PC1 + PC2 + PC3, 
+                            data=GOLDSHI_model_data_Delta, na.action="na.fail")
+summary(fit_GOLDSHI_global_Delta)
+par(mfrow=c(2,3)); plot(fit_GOLDSHI_global_Delta)
+acf(fit_GOLDSHI_global_Delta$residuals)
+acf(GOLDSHI_model_data_Delta$log_Index_Delta)
+
+
+
+## San Joaquin
+
+GOLDSHI_tmp_SJ <- GOLDSHI_final %>%
+  dplyr::select(Year, Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, MeanWT_SJ) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+GOLDSHI_tmp_SJ <- do_PCA(GOLDSHI_tmp_SJ)
+GOLDSHI_PCA_SJ <- GOLDSHI_tmp_SJ$PCA
+GOLDSHI_PCA_SJ
+GOLDSHI_model_data_SJ <- GOLDSHI_tmp_SJ$dat
+
+nrow(GOLDSHI_final)
+nrow(GOLDSHI_model_data_SJ)
+
+pairs(GOLDSHI_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_GOLDSHI_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
+                            data=GOLDSHI_model_data_SJ, na.action="na.fail")
+summary(fit_GOLDSHI_global_SJ)
+par(mfrow=c(2,3)); plot(fit_GOLDSHI_global_SJ)
+acf(fit_GOLDSHI_global_SJ$residuals)
+acf(GOLDSHI_model_data_SJ$log_Index_SJ)
+
+
+
+## Liberty Island
+
+## Too few data points.
+
+GOLDSHI_tmp_LI <- GOLDSHI_final %>%
+       dplyr::select(Year, Index_LI, log_Index_LI, MeanFlow_Yolo, FlowTiming_Yolo, 
+                     MeanWT_LI) %>%
+       tidyr::drop_na()
+nrow(GOLDSHI_final)
+nrow(GOLDSHI_tmp_LI)
+
+
+
+## Yolo
+
+GOLDSHI_tmp_Yolo <- GOLDSHI_final %>%
+  dplyr::select(Year, Index_Yolo, log_Index_Yolo, MeanFlow_Yolo, FlowTiming_Yolo, 
+                MeanWT_Yolo) %>%
+  tidyr::drop_na() %>%
+  addStandardizedCovariates()
+GOLDSHI_tmp_Yolo <- do_PCA(GOLDSHI_tmp_Yolo)
+GOLDSHI_PCA_Yolo <- GOLDSHI_tmp_Yolo$PCA
+GOLDSHI_PCA_Yolo
+GOLDSHI_model_data_Yolo <- GOLDSHI_tmp_Yolo$dat
+
+nrow(GOLDSHI_final)
+nrow(GOLDSHI_model_data_Yolo)
+
+pairs(GOLDSHI_model_data_Yolo %>%
+        dplyr::select(Index_Yolo, log_Index_Yolo, PC1, PC2, PC3), 
+      upper.panel=my_cor)
+
+fit_GOLDSHI_global_Yolo <- lm(log_Index_Yolo ~ PC1 + PC2 + PC3, 
+                            data=GOLDSHI_model_data_Yolo, na.action="na.fail")
+summary(fit_GOLDSHI_global_Yolo)
+par(mfrow=c(2,3)); plot(fit_GOLDSHI_global_Yolo)
+acf(fit_GOLDSHI_global_Yolo$residuals)
+acf(GOLDSHI_model_data_Yolo$log_Index_Yolo)
+
+
+## Save model data:
+write.csv(GOLDSHI_model_data_Sac, file.path(out_root,"GOLDSHI_model_data_Sac.csv"), 
+          row.names=FALSE)
+write.csv(GOLDSHI_model_data_Delta, file.path(out_root,"GOLDSHI_model_data_Delta.csv"), 
+          row.names=FALSE)
+write.csv(GOLDSHI_model_data_SJ, file.path(out_root,"GOLDSHI_model_data_SJ.csv"), 
+          row.names=FALSE)
+write.csv(GOLDSHI_model_data_Yolo, file.path(out_root,"GOLDSHI_model_data_Yolo.csv"), 
+          row.names=FALSE)
+
+GOLDSHI_PCA_compiled <- cbind(format_PCA(GOLDSHI_PCA_Sac), 
+                              format_PCA(GOLDSHI_PCA_Delta), 
+                              format_PCA(GOLDSHI_PCA_SJ),
+                              format_PCA(GOLDSHI_PCA_Yolo))
+write.csv(GOLDSHI_PCA_compiled, file.path(out_root,"GOLDSHI_PCA_compiled.csv"), na="", 
+          row.names=FALSE)
+
+```
+

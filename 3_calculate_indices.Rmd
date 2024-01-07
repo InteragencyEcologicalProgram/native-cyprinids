@@ -26,7 +26,7 @@ windowsFonts(Times = windowsFont("Times New Roman"))
 
 ```{r}
 # read in catch data
-data <- readRDS("data_clean/seine_djfmp_ybfmp.rds")
+data <- readRDS(file.path("output","data_clean","seine_djfmp_ybfmp.rds"))
 summary(data)
 
 ## Add region:
@@ -37,14 +37,14 @@ summary(data)
 ## 5 = San Joaquin
 
 # Complete set of regions:
-all_regions <- c("Sacramento","Yolo","Liberty_Island","Delta","San_Joaquin")
+all_regions <- c("Sac","Yolo","LI","Delta","SJ")
 
 data <- data %>%
   mutate(Region = case_when(Program == "DJFMP" & RegionCode == 2 & 
-                              grepl("^LI",StationCode) ~ "Liberty_Island", 
-                            RegionCode %in% c(1) ~ "Sacramento",
+                              grepl("^LI",StationCode) ~ "LI", 
+                            RegionCode %in% c(1) ~ "Sac",
                             RegionCode %in% c(2,3,4,7) ~ "Delta",
-                            RegionCode %in% c(5) ~ "San_Joaquin",
+                            RegionCode %in% c(5) ~ "SJ",
                             grepl("YBFMP", EventID) ~ "Yolo"))
 
 ## Carry out subsetting that is common to all species data sets: 
@@ -377,12 +377,11 @@ calculateIndices <- function(dat) {
     group_by(Year, Region) %>% 
     summarise(Index = mean(CPUE), 
               .groups="drop") %>%
-    mutate(log_Index=log(Index + 0.00001)) %>%
+    mutate(log_Index=ifelse(Index != 0, log(Index), NA)) %>%
     tidyr::pivot_wider(id_cols=Year,
                        names_from=Region,
                        values_from=c(Index, log_Index)) %>%
-    mutate(Index_Watershed=Index_Delta + Index_Sacramento + 
-                              Index_San_Joaquin + Index_Yolo + Index_Liberty_Island)
+    mutate(Index_Watershed=Index_Delta + Index_Sac + Index_SJ + Index_Yolo + Index_LI)
 
   return(ret)
 }
@@ -398,8 +397,8 @@ GOLDSHI_Index_Final <- calculateIndices(data_GOLDSHI_age0)
 ## Figures:
 plotIndices <- function(index_dat) {
   ret <- index_dat %>%
-    dplyr::select(-c(log_Index_Delta, log_Index_Liberty_Island, log_Index_Sacramento,
-                     log_Index_San_Joaquin, log_Index_Yolo)) %>%
+    dplyr::select(-c(log_Index_Delta, log_Index_LI, log_Index_Sac,
+                     log_Index_SJ, log_Index_Yolo)) %>%
     tidyr::pivot_longer(cols=-Year, names_to="Region", values_to="Index",
                         names_prefix="Index_") %>%
     dplyr::mutate(Region_f=factor(Region, levels=c(all_regions,"Watershed"), 
@@ -516,7 +515,7 @@ calculateMeanFlowAndTiming <- function(discharge_dat, plot_opt=TRUE) {
     dplyr::filter(ref_date_min <= Date & Date <= ref_date_max) %>%
     dplyr::select(Julian_Date, Year, Date, ref_date_min, ref_date_max, 
                   SJR, SAC, OUT, YOLO) %>%
-    dplyr::group_by(Year) %>% 
+    dplyr::group_by(Year) %>%
     dplyr::reframe(Julian_Date, Year, Date, ref_date_min, ref_date_max,
                    SJR, SAC, OUT, YOLO,
                    ## Save here for optional plotting later:
@@ -524,7 +523,7 @@ calculateMeanFlowAndTiming <- function(discharge_dat, plot_opt=TRUE) {
                    scaled_Sac=SAC/sum(SAC),
                    scaled_Delta=OUT/sum(OUT),
                    scaled_Yolo=YOLO/sum(YOLO))
-  
+
   sw_flow_summary_wide <- sw_flow_wide %>%
     dplyr::group_by(Year) %>% 
     dplyr::summarise(
@@ -536,10 +535,11 @@ calculateMeanFlowAndTiming <- function(discharge_dat, plot_opt=TRUE) {
       ## Time of flow within the selected spawning window:
       FlowTiming_SJ = sum(Julian_Date * scaled_SJ),
       FlowTiming_Sac = sum(Julian_Date * scaled_Sac),
-      FlowTiming_Delta = sum(Julian_Date * (scaled_Delta)),
-      FlowTiming_Yolo = sum(Julian_Date * (scaled_Yolo)),
+      FlowTiming_Delta = sum(Julian_Date * scaled_Delta),
+      FlowTiming_Yolo = sum(Julian_Date * scaled_Yolo),
+
       .groups="drop")
-  
+
   ## Optional plotting:
   if(plot_opt) {
     scaled_sw_flow_long <- sw_flow_wide %>%
@@ -713,63 +713,29 @@ GOLDSHI_MeanWT <- data %>%
 
 ```{r}
 
-addStandardizedCovariates <- function(x) {
-  all_names <- names(x)
-  covar_names <- all_names[all_names != "Year"]
-  
-  for(this_col in covar_names) {
-    x[ ,paste0(this_col,"_stand")] <- scale(x[ ,this_col])
-  }
-  return(x)
-}
-
 ## SACPIK:
 SACPIK_Covariates <- dplyr::full_join(SACPIK_Discharge, SACPIK_MeanWT, by="Year")
-SACPIK_Covariates <- addStandardizedCovariates(SACPIK_Covariates)
-
-SACPIK_final <- dplyr::left_join(SACPIK_Index_Final,
-                                 SACPIK_Covariates,
-                                 by="Year")
+SACPIK_final <- dplyr::left_join(SACPIK_Index_Final, SACPIK_Covariates, by="Year")
 
 ## SPLITT:
-SPLITT_Covariates <- dplyr::full_join(SPLITT_Discharge, SPLITT_MeanWT, by="Year")                      
-SPLITT_Covariates <- addStandardizedCovariates(SPLITT_Covariates)
-
-SPLITT_final <- dplyr::left_join(SPLITT_Index_Final,
-                                 SPLITT_Covariates,
-                                 by="Year")
+SPLITT_Covariates <- dplyr::full_join(SPLITT_Discharge, SPLITT_MeanWT, by="Year")
+SPLITT_final <- dplyr::left_join(SPLITT_Index_Final, SPLITT_Covariates, by="Year")
 
 ## SACSUC:
-SACSUC_Covariates <- dplyr::full_join(SACSUC_Discharge, SACSUC_MeanWT, by="Year")                                    
-SACSUC_Covariates <- addStandardizedCovariates(SACSUC_Covariates)
-
-SACSUC_final <- dplyr::left_join(SACSUC_Index_Final,
-                                 SACSUC_Covariates,
-                                 by="Year")
+SACSUC_Covariates <- dplyr::full_join(SACSUC_Discharge, SACSUC_MeanWT, by="Year")
+SACSUC_final <- dplyr::left_join(SACSUC_Index_Final, SACSUC_Covariates, by="Year")
 
 ## COMCAR:
 COMCAR_Covariates <- dplyr::full_join(COMCAR_Discharge, COMCAR_MeanWT, by="Year")
-COMCAR_Covariates <- addStandardizedCovariates(COMCAR_Covariates)
-
-COMCAR_final <- dplyr::left_join(COMCAR_Index_Final,
-                                 COMCAR_Covariates,
-                                 by="Year")
+COMCAR_final <- dplyr::left_join(COMCAR_Index_Final, COMCAR_Covariates, by="Year")
 
 ## REDSHI:
-REDSHI_Covariates <- dplyr::full_join(REDSHI_Discharge, REDSHI_MeanWT, by="Year")         
-REDSHI_Covariates <- addStandardizedCovariates(REDSHI_Covariates)
-
-REDSHI_final <- dplyr::left_join(REDSHI_Index_Final,
-                                 REDSHI_Covariates,
-                                 by="Year")
+REDSHI_Covariates <- dplyr::full_join(REDSHI_Discharge, REDSHI_MeanWT, by="Year")
+REDSHI_final <- dplyr::left_join(REDSHI_Index_Final, REDSHI_Covariates, by="Year")
 
 ## GOLDSHI:
 GOLDSHI_Covariates <- dplyr::full_join(GOLDSHI_Discharge, GOLDSHI_MeanWT, by="Year")
-GOLDSHI_Covariates <- addStandardizedCovariates(GOLDSHI_Covariates)
-
-GOLDSHI_final <- dplyr::left_join(GOLDSHI_Index_Final,
-                                  GOLDSHI_Covariates,
-                                  by="Year")
+GOLDSHI_final <- dplyr::left_join(GOLDSHI_Index_Final, GOLDSHI_Covariates, by="Year")
 
 ```
 
@@ -778,28 +744,23 @@ GOLDSHI_final <- dplyr::left_join(GOLDSHI_Index_Final,
 ```{r fig.height=6, warning=FALSE}
 
 plot_corr <- function(dat, species, region) {
-  stopifnot(region %in% c("Delta","Liberty Island","Yolo","Sacramento","San Joaquin"))
+  stopifnot(region %in% c("Delta","LI","Yolo","Sac","SJ"))
   
   if(region == "Delta") {
-    use_dat <- dat[ ,c("Index_Delta","MeanFlow_Delta_stand",
-                       "FlowTiming_Delta_stand","MeanWT_Delta_stand")]
+    use_dat <- dat[ ,c("Index_Delta","MeanFlow_Delta","FlowTiming_Delta","MeanWT_Delta")]
     
-  } else if(region == "Liberty Island") {
+  } else if(region == "LI") {
     ## Using Yolo flow for Liberty Island??
-    use_dat <- dat[ ,c("Index_Liberty_Island","MeanFlow_Yolo_stand",
-                       "FlowTiming_Yolo_stand","MeanWT_Liberty_Island_stand")]
+    use_dat <- dat[ ,c("Index_LI","MeanFlow_Yolo","FlowTiming_Yolo","MeanWT_LI")]
     
   } else if(region == "Yolo") {
-    use_dat <- dat[ ,c("Index_Yolo","MeanFlow_Yolo_stand",
-                       "FlowTiming_Yolo_stand","MeanWT_Yolo_stand")]
+    use_dat <- dat[ ,c("Index_Yolo","MeanFlow_Yolo","FlowTiming_Yolo","MeanWT_Yolo")]
     
-  } else if(region == "Sacramento") {
-    use_dat <- dat[ ,c("Index_Sacramento","MeanFlow_Sac_stand",
-                       "FlowTiming_Sac_stand","MeanWT_Sacramento_stand")]
+  } else if(region == "Sac") {
+    use_dat <- dat[ ,c("Index_Sac","MeanFlow_Sac","FlowTiming_Sac","MeanWT_Sac")]
     
-  } else if(region == "San Joaquin") {
-    use_dat <- dat[ ,c("Index_San_Joaquin","MeanFlow_SJ_stand",
-                       "FlowTiming_SJ_stand","MeanWT_San_Joaquin_stand")]
+  } else if(region == "SJ") {
+    use_dat <- dat[ ,c("Index_SJ","MeanFlow_SJ","FlowTiming_SJ","MeanWT_SJ")]
     
   }
 
@@ -822,12 +783,12 @@ plot_corr(REDSHI_final, species="Red shiner", region="Delta")
 plot_corr(GOLDSHI_final, species="Golden shiner", region="Delta")
 
 
-plot_corr(SACPIK_final, species="Pikeminnow", region="Liberty Island")
-plot_corr(SPLITT_final, species="Splittail", region="Liberty Island")
-plot_corr(SACSUC_final, species="Sucker", region="Liberty Island")
-plot_corr(COMCAR_final, species="Carp", region="Liberty Island")
-plot_corr(REDSHI_final, species="Red shiner", region="Liberty Island")
-plot_corr(GOLDSHI_final, species="Golden shiner", region="Liberty Island")
+plot_corr(SACPIK_final, species="Pikeminnow", region="LI")
+plot_corr(SPLITT_final, species="Splittail", region="LI")
+plot_corr(SACSUC_final, species="Sucker", region="LI")
+plot_corr(COMCAR_final, species="Carp", region="LI")
+plot_corr(REDSHI_final, species="Red shiner", region="LI")
+plot_corr(GOLDSHI_final, species="Golden shiner", region="LI")
 
 
 plot_corr(SACPIK_final, species="Pikeminnow", region="Yolo")
@@ -838,20 +799,20 @@ plot_corr(REDSHI_final, species="Red shiner", region="Yolo")
 plot_corr(GOLDSHI_final, species="Golden shiner", region="Yolo")
 
 
-plot_corr(SACPIK_final, species="Pikeminnow", region="Sacramento")
-plot_corr(SPLITT_final, species="Splittail", region="Sacramento")
-plot_corr(SACSUC_final, species="Sucker", region="Sacramento")
-plot_corr(COMCAR_final, species="Carp", region="Sacramento")
-plot_corr(REDSHI_final, species="Red shiner", region="Sacramento")
-plot_corr(GOLDSHI_final, species="Golden shiner", region="Sacramento")
+plot_corr(SACPIK_final, species="Pikeminnow", region="Sac")
+plot_corr(SPLITT_final, species="Splittail", region="Sac")
+plot_corr(SACSUC_final, species="Sucker", region="Sac")
+plot_corr(COMCAR_final, species="Carp", region="Sac")
+plot_corr(REDSHI_final, species="Red shiner", region="Sac")
+plot_corr(GOLDSHI_final, species="Golden shiner", region="Sac")
 
 
-plot_corr(SACPIK_final, species="Pikeminnow", region="San Joaquin")
-plot_corr(SPLITT_final, species="Splittail", region="San Joaquin")
-plot_corr(SACSUC_final, species="Sucker", region="San Joaquin")
-plot_corr(COMCAR_final, species="Carp", region="San Joaquin")
-plot_corr(REDSHI_final, species="Red shiner", region="San Joaquin")
-plot_corr(GOLDSHI_final, species="Golden shiner", region="San Joaquin")
+plot_corr(SACPIK_final, species="Pikeminnow", region="SJ")
+plot_corr(SPLITT_final, species="Splittail", region="SJ")
+plot_corr(SACSUC_final, species="Sucker", region="SJ")
+plot_corr(COMCAR_final, species="Carp", region="SJ")
+plot_corr(REDSHI_final, species="Red shiner", region="SJ")
+plot_corr(GOLDSHI_final, species="Golden shiner", region="SJ")
 
 ```
 
@@ -859,12 +820,18 @@ plot_corr(GOLDSHI_final, species="Golden shiner", region="San Joaquin")
 
 ```{r}
 
-write.csv(SACPIK_final, "data_clean/SACPIK_index.csv", row.names=FALSE)
-write.csv(SPLITT_final, "data_clean/SPLITT_index.csv", row.names=FALSE)
-write.csv(SACSUC_final, "data_clean/SACSUC_index.csv", row.names=FALSE)
-write.csv(COMCAR_final, "data_clean/COMCAR_index.csv", row.names=FALSE)
-write.csv(REDSHI_final, "data_clean/REDSHI_index.csv", row.names=FALSE)
-write.csv(GOLDSHI_final, "data_clean/GOLDSHI_index.csv", row.names=FALSE)
+write.csv(SACPIK_final, file.path("output","index_and_center_of_distn",
+                                  "SACPIK_index.csv"), row.names=FALSE)
+write.csv(SPLITT_final, file.path("output","index_and_center_of_distn",
+                                  "SPLITT_index.csv"), row.names=FALSE)
+write.csv(SACSUC_final, file.path("output","index_and_center_of_distn",
+                                  "SACSUC_index.csv"), row.names=FALSE)
+write.csv(COMCAR_final, file.path("output","index_and_center_of_distn",
+                                  "COMCAR_index.csv"), row.names=FALSE)
+write.csv(REDSHI_final,file.path("output","index_and_center_of_distn",
+                                 "REDSHI_index.csv"), row.names=FALSE)
+write.csv(GOLDSHI_final, file.path("output","index_and_center_of_distn",
+                                   "GOLDSHI_index.csv"), row.names=FALSE)
 
 ```
 
