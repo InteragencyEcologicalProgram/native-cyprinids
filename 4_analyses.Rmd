@@ -212,13 +212,9 @@ nrow(SACPIK_final)
 nrow(SACPIK_model_data_Sac)
 
 pairs(SACPIK_model_data_Sac %>%
-        dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
-      upper.panel=my_cor)
-pairs(SACPIK_model_data_Sac %>%
         dplyr::select(Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
                       MeanWT_Sac),
       upper.panel=my_cor)
-
 summary(lm(log_Index_Sac ~ MeanFlow_Sac, data=SACPIK_model_data_Sac, 
            na.action="na.fail"))
 summary(lm(log_Index_Sac ~ FlowTiming_Sac, data=SACPIK_model_data_Sac, 
@@ -226,6 +222,9 @@ summary(lm(log_Index_Sac ~ FlowTiming_Sac, data=SACPIK_model_data_Sac,
 summary(lm(log_Index_Sac ~ MeanWT_Sac, data=SACPIK_model_data_Sac, 
            na.action="na.fail"))
 
+pairs(SACPIK_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
+      upper.panel=my_cor)
 fit_SACPIK_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
                             data=SACPIK_model_data_Sac, na.action="na.fail")
 summary(fit_SACPIK_global_Sac)
@@ -278,9 +277,19 @@ nrow(SACPIK_final)
 nrow(SACPIK_model_data_Delta)
 
 pairs(SACPIK_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                      MeanWT_Delta),
+      upper.panel=my_cor)
+summary(lm(log_Index_Delta ~ MeanFlow_Delta, data=SACPIK_model_data_Delta, 
+           na.action="na.fail"))
+summary(lm(log_Index_Delta ~ FlowTiming_Delta, data=SACPIK_model_data_Delta, 
+           na.action="na.fail"))
+summary(lm(log_Index_Delta ~ MeanWT_Delta, data=SACPIK_model_data_Delta, 
+           na.action="na.fail"))
+
+pairs(SACPIK_model_data_Delta %>%
         dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SACPIK_global_Delta <- lm(log_Index_Delta ~ PC1  + PC2 + PC3, 
                               data=SACPIK_model_data_Delta, na.action="na.fail")
 summary(fit_SACPIK_global_Delta)
@@ -305,9 +314,19 @@ nrow(SACPIK_final)
 nrow(SACPIK_model_data_SJ)
 
 pairs(SACPIK_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, 
+                      MeanWT_SJ),
+      upper.panel=my_cor)
+summary(lm(log_Index_SJ ~ MeanFlow_SJ, data=SACPIK_model_data_SJ, 
+           na.action="na.fail"))
+summary(lm(log_Index_SJ ~ FlowTiming_SJ, data=SACPIK_model_data_SJ, 
+           na.action="na.fail"))
+summary(lm(log_Index_SJ ~ MeanWT_SJ, data=SACPIK_model_data_SJ, 
+           na.action="na.fail"))
+
+pairs(SACPIK_model_data_SJ %>%
         dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SACPIK_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
                             data=SACPIK_model_data_SJ, na.action="na.fail")
 summary(fit_SACPIK_global_SJ)
@@ -379,9 +398,19 @@ nrow(SPLITT_final)
 nrow(SPLITT_model_data_Sac)
 
 pairs(SPLITT_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
+                      MeanWT_Sac),
+      upper.panel=my_cor)
+summary(lm(log_Index_Sac ~ MeanFlow_Sac, data=SPLITT_model_data_Sac, 
+           na.action="na.fail"))
+summary(lm(log_Index_Sac ~ FlowTiming_Sac, data=SPLITT_model_data_Sac, 
+           na.action="na.fail"))
+summary(lm(log_Index_Sac ~ MeanWT_Sac, data=SPLITT_model_data_Sac, 
+           na.action="na.fail"))
+
+pairs(SPLITT_model_data_Sac %>%
         dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SPLITT_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
                             data=SPLITT_model_data_Sac, na.action="na.fail")
 summary(fit_SPLITT_global_Sac)
@@ -407,9 +436,19 @@ nrow(SPLITT_final)
 nrow(SPLITT_model_data_Delta)
 
 pairs(SPLITT_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                      MeanWT_Delta),
+      upper.panel=my_cor)
+summary(lm(log_Index_Delta ~ MeanFlow_Delta, data=SPLITT_model_data_Delta, 
+           na.action="na.fail"))
+summary(lm(log_Index_Delta ~ FlowTiming_Delta, data=SPLITT_model_data_Delta, 
+           na.action="na.fail"))
+summary(lm(log_Index_Delta ~ MeanWT_Delta, data=SPLITT_model_data_Delta, 
+           na.action="na.fail"))
+
+pairs(SPLITT_model_data_Delta %>%
         dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SPLITT_global_Delta <- lm(log_Index_Delta ~ PC1 + PC2 + PC3, 
                             data=SPLITT_model_data_Delta, na.action="na.fail")
 summary(fit_SPLITT_global_Delta)
@@ -434,9 +473,19 @@ nrow(SPLITT_final)
 nrow(SPLITT_model_data_SJ)
 
 pairs(SPLITT_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, 
+                      MeanWT_SJ),
+      upper.panel=my_cor)
+summary(lm(log_Index_SJ ~ MeanFlow_SJ, data=SPLITT_model_data_SJ, 
+           na.action="na.fail"))
+summary(lm(log_Index_SJ ~ FlowTiming_SJ, data=SPLITT_model_data_SJ, 
+           na.action="na.fail"))
+summary(lm(log_Index_SJ ~ MeanWT_SJ, data=SPLITT_model_data_SJ, 
+           na.action="na.fail"))
+
+pairs(SPLITT_model_data_SJ %>%
         dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SPLITT_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
                             data=SPLITT_model_data_SJ, na.action="na.fail")
 summary(fit_SPLITT_global_SJ)
@@ -462,9 +511,19 @@ nrow(SPLITT_final)
 nrow(SPLITT_model_data_LI)
 
 pairs(SPLITT_model_data_LI %>%
+        dplyr::select(Index_LI, log_Index_LI, MeanFlow_Yolo, FlowTiming_Yolo, 
+                      MeanWT_LI),
+      upper.panel=my_cor)
+summary(lm(log_Index_LI ~ MeanFlow_Yolo, data=SPLITT_model_data_LI, 
+           na.action="na.fail"))
+summary(lm(log_Index_LI ~ FlowTiming_Yolo, data=SPLITT_model_data_LI, 
+           na.action="na.fail"))
+summary(lm(log_Index_LI ~ MeanWT_LI, data=SPLITT_model_data_LI, 
+           na.action="na.fail"))
+
+pairs(SPLITT_model_data_LI %>%
         dplyr::select(Index_LI, log_Index_LI, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SPLITT_global_LI <- lm(log_Index_LI ~ PC1 + PC2 + PC3, 
                             data=SPLITT_model_data_LI, na.action="na.fail")
 summary(fit_SPLITT_global_LI)
@@ -490,9 +549,19 @@ nrow(SPLITT_final)
 nrow(SPLITT_model_data_Yolo)
 
 pairs(SPLITT_model_data_Yolo %>%
+        dplyr::select(Index_Yolo, log_Index_Yolo, MeanFlow_Yolo, FlowTiming_Yolo, 
+                      MeanWT_Yolo),
+      upper.panel=my_cor)
+summary(lm(log_Index_Yolo ~ MeanFlow_Yolo, data=SPLITT_model_data_Yolo, 
+           na.action="na.fail"))
+summary(lm(log_Index_Yolo ~ FlowTiming_Yolo, data=SPLITT_model_data_Yolo, 
+           na.action="na.fail"))
+summary(lm(log_Index_Yolo ~ MeanWT_Yolo, data=SPLITT_model_data_Yolo, 
+           na.action="na.fail"))
+
+pairs(SPLITT_model_data_Yolo %>%
         dplyr::select(Index_Yolo, log_Index_Yolo, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SPLITT_global_Yolo <- lm(log_Index_Yolo ~ PC1 + PC2 + PC3, 
                             data=SPLITT_model_data_Yolo, na.action="na.fail")
 summary(fit_SPLITT_global_Yolo)
@@ -544,9 +613,19 @@ nrow(SACSUC_final)
 nrow(SACSUC_model_data_Sac)
 
 pairs(SACSUC_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
+                      MeanWT_Sac),
+      upper.panel=my_cor)
+summary(lm(log_Index_Sac ~ MeanFlow_Sac, data=SACSUC_model_data_Sac, 
+           na.action="na.fail"))
+summary(lm(log_Index_Sac ~ FlowTiming_Sac, data=SACSUC_model_data_Sac, 
+           na.action="na.fail"))
+summary(lm(log_Index_Sac ~ MeanWT_Sac, data=SACSUC_model_data_Sac, 
+           na.action="na.fail"))
+
+pairs(SACSUC_model_data_Sac %>%
         dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SACSUC_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
                             data=SACSUC_model_data_Sac, na.action="na.fail")
 summary(fit_SACSUC_global_Sac)
@@ -572,9 +651,19 @@ nrow(SACSUC_final)
 nrow(SACSUC_model_data_Delta)
 
 pairs(SACSUC_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                      MeanWT_Delta),
+      upper.panel=my_cor)
+summary(lm(log_Index_Delta ~ MeanFlow_Delta, data=SACSUC_model_data_Delta, 
+           na.action="na.fail"))
+summary(lm(log_Index_Delta ~ FlowTiming_Delta, data=SACSUC_model_data_Delta, 
+           na.action="na.fail"))
+summary(lm(log_Index_Delta ~ MeanWT_Delta, data=SACSUC_model_data_Delta, 
+           na.action="na.fail"))
+
+pairs(SACSUC_model_data_Delta %>%
         dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SACSUC_global_Delta <- lm(log_Index_Delta ~ PC1 + PC2 + PC3, 
                             data=SACSUC_model_data_Delta, na.action="na.fail")
 summary(fit_SACSUC_global_Delta)
@@ -599,9 +688,19 @@ nrow(SACSUC_final)
 nrow(SACSUC_model_data_SJ)
 
 pairs(SACSUC_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, 
+                      MeanWT_SJ),
+      upper.panel=my_cor)
+summary(lm(log_Index_SJ ~ MeanFlow_SJ, data=SACSUC_model_data_SJ, 
+           na.action="na.fail"))
+summary(lm(log_Index_SJ ~ FlowTiming_SJ, data=SACSUC_model_data_SJ, 
+           na.action="na.fail"))
+summary(lm(log_Index_SJ ~ MeanWT_SJ, data=SACSUC_model_data_SJ, 
+           na.action="na.fail"))
+
+pairs(SACSUC_model_data_SJ %>%
         dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SACSUC_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
                             data=SACSUC_model_data_SJ, na.action="na.fail")
 summary(fit_SACSUC_global_SJ)
@@ -640,9 +739,19 @@ nrow(SACSUC_final)
 nrow(SACSUC_model_data_Yolo)
 
 pairs(SACSUC_model_data_Yolo %>%
+        dplyr::select(Index_Yolo, log_Index_Yolo, MeanFlow_Yolo, FlowTiming_Yolo, 
+                      MeanWT_Yolo),
+      upper.panel=my_cor)
+summary(lm(log_Index_Yolo ~ MeanFlow_Yolo, data=SACSUC_model_data_Yolo, 
+           na.action="na.fail"))
+summary(lm(log_Index_Yolo ~ FlowTiming_Yolo, data=SACSUC_model_data_Yolo, 
+           na.action="na.fail"))
+summary(lm(log_Index_Yolo ~ MeanWT_Yolo, data=SACSUC_model_data_Yolo, 
+           na.action="na.fail"))
+
+pairs(SACSUC_model_data_Yolo %>%
         dplyr::select(Index_Yolo, log_Index_Yolo, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_SACSUC_global_Yolo <- lm(log_Index_Yolo ~ PC1 + PC2 + PC3, 
                             data=SACSUC_model_data_Yolo, na.action="na.fail")
 summary(fit_SACSUC_global_Yolo)
@@ -690,9 +799,19 @@ nrow(COMCAR_final)
 nrow(COMCAR_model_data_Sac)
 
 pairs(COMCAR_model_data_Sac %>%
+        dplyr::select(Index_Sac, log_Index_Sac, MeanFlow_Sac, FlowTiming_Sac, 
+                      MeanWT_Sac),
+      upper.panel=my_cor)
+summary(lm(log_Index_Sac ~ MeanFlow_Sac, data=COMCAR_model_data_Sac, 
+           na.action="na.fail"))
+summary(lm(log_Index_Sac ~ FlowTiming_Sac, data=COMCAR_model_data_Sac, 
+           na.action="na.fail"))
+summary(lm(log_Index_Sac ~ MeanWT_Sac, data=COMCAR_model_data_Sac, 
+           na.action="na.fail"))
+
+pairs(COMCAR_model_data_Sac %>%
         dplyr::select(Index_Sac, log_Index_Sac, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_COMCAR_global_Sac <- lm(log_Index_Sac ~ PC1 + PC2 + PC3, 
                             data=COMCAR_model_data_Sac, na.action="na.fail")
 summary(fit_COMCAR_global_Sac)
@@ -718,9 +837,19 @@ nrow(COMCAR_final)
 nrow(COMCAR_model_data_Delta)
 
 pairs(COMCAR_model_data_Delta %>%
+        dplyr::select(Index_Delta, log_Index_Delta, MeanFlow_Delta, FlowTiming_Delta, 
+                      MeanWT_Delta),
+      upper.panel=my_cor)
+summary(lm(log_Index_Delta ~ MeanFlow_Delta, data=COMCAR_model_data_Delta, 
+           na.action="na.fail"))
+summary(lm(log_Index_Delta ~ FlowTiming_Delta, data=COMCAR_model_data_Delta, 
+           na.action="na.fail"))
+summary(lm(log_Index_Delta ~ MeanWT_Delta, data=COMCAR_model_data_Delta, 
+           na.action="na.fail"))
+
+pairs(COMCAR_model_data_Delta %>%
         dplyr::select(Index_Delta, log_Index_Delta, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_COMCAR_global_Delta <- lm(log_Index_Delta ~ PC1 + PC2 + PC3, 
                             data=COMCAR_model_data_Delta, na.action="na.fail")
 summary(fit_COMCAR_global_Delta)
@@ -745,9 +874,19 @@ nrow(COMCAR_final)
 nrow(COMCAR_model_data_SJ)
 
 pairs(COMCAR_model_data_SJ %>%
+        dplyr::select(Index_SJ, log_Index_SJ, MeanFlow_SJ, FlowTiming_SJ, 
+                      MeanWT_SJ),
+      upper.panel=my_cor)
+summary(lm(log_Index_SJ ~ MeanFlow_SJ, data=COMCAR_model_data_SJ, 
+           na.action="na.fail"))
+summary(lm(log_Index_SJ ~ FlowTiming_SJ, data=COMCAR_model_data_SJ, 
+           na.action="na.fail"))
+summary(lm(log_Index_SJ ~ MeanWT_SJ, data=COMCAR_model_data_SJ, 
+           na.action="na.fail"))
+
+pairs(COMCAR_model_data_SJ %>%
         dplyr::select(Index_SJ, log_Index_SJ, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_COMCAR_global_SJ <- lm(log_Index_SJ ~ PC1 + PC2 + PC3, 
                             data=COMCAR_model_data_SJ, na.action="na.fail")
 summary(fit_COMCAR_global_SJ)
@@ -787,9 +926,19 @@ nrow(COMCAR_final)
 nrow(COMCAR_model_data_Yolo)
 
 pairs(COMCAR_model_data_Yolo %>%
+        dplyr::select(Index_Yolo, log_Index_Yolo, MeanFlow_Yolo, FlowTiming_Yolo, 
+                      MeanWT_Yolo),
+      upper.panel=my_cor)
+summary(lm(log_Index_Yolo ~ MeanFlow_Yolo, data=COMCAR_model_data_Yolo, 
+           na.action="na.fail"))
+summary(lm(log_Index_Yolo ~ FlowTiming_Yolo, data=COMCAR_model_data_Yolo, 
+           na.action="na.fail"))
+summary(lm(log_Index_Yolo ~ MeanWT_Yolo, data=COMCAR_model_data_Yolo, 
+           na.action="na.fail"))
+
+pairs(COMCAR_model_data_Yolo %>%
         dplyr::select(Index_Yolo, log_Index_Yolo, PC1, PC2, PC3), 
       upper.panel=my_cor)
-
 fit_COMCAR_global_Yolo <- lm(log_Index_Yolo ~ PC1 + PC2 + PC3, 
                             data=COMCAR_model_data_Yolo, na.action="na.fail")
 summary(fit_COMCAR_global_Yolo)
