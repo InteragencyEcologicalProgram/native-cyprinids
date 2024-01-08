@@ -258,7 +258,7 @@ allfm_catch <- allfmp_catch0 %>%
   filter(1995 <= Year & Year <= 2019)
 
 # Write --------
-saveRDS(allfm_catch, "data_clean/seine_djfmp_ybfmp.rds")
+saveRDS(allfm_catch, file.path("output","data_clean","seine_djfmp_ybfmp.rds"))
 
 
 
@@ -275,6 +275,6 @@ sites0_latlong <- rbind(djfmp_sites0 %>%
 uniq_sites <- uniq_sites %>%
   dplyr::left_join(sites0_latlong, by="StationCode")
 
-write.csv(uniq_sites, "data_clean/unique_sites.csv", row.names=FALSE)
+write.csv(uniq_sites, file.path("output","data_clean","unique_sites.csv"), row.names=FALSE)
 
 
