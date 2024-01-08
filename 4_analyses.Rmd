@@ -7,7 +7,7 @@ editor_options:
 knit: (function(input, ...) {
     rmarkdown::render(
       input,
-      output_dir="Figures")
+      output_dir="html")
   })
 ---
 
