@@ -24,6 +24,7 @@ library(psych)
 library(mgcv)
 library(MuMIn)
 library(pls)
+library(openxlsx)
 
 out_root <- file.path("output","models_abundance_index")
 ```
@@ -171,13 +172,57 @@ do_PCA <- function(dat) {
 }
 
 format_PCA <- function(pca) {
+  if(is.null(pca)) {
+    return(NULL)
+  }
   ret <- rbind(pca$weights, matrix(NA, nrow=1, ncol=3), pca$Vaccounted)
   ret <- as.data.frame(ret)
   ret <- dplyr::mutate(ret, Name=row.names(ret), .before=PC1)
-  ret <- dplyr::mutate(ret, Spacer="")
+  #ret <- dplyr::mutate(ret, Spacer="")
   row.names(ret) <- NULL
   
   return(ret)
+}
+
+
+save_data_and_PCA <- function(file_name, 
+															data_Sac, data_Delta, data_SJ, data_LI, data_Yolo, 
+															PCA_Sac, PCA_Delta, PCA_SJ, PCA_LI, PCA_Yolo) {
+
+	wb <- openxlsx::createWorkbook()
+
+	openxlsx::addWorksheet(wb=wb, sheet="model_data_Sac")
+	openxlsx::writeData(wb=wb, sheet="model_data_Sac", x=data_Sac)
+
+	openxlsx::addWorksheet(wb=wb, sheet="model_data_Delta")
+	openxlsx::writeData(wb=wb, sheet="model_data_Delta", x=data_Delta)
+
+	openxlsx::addWorksheet(wb=wb, sheet="model_data_SJ")
+	openxlsx::writeData(wb=wb, sheet="model_data_SJ", x=data_SJ)
+
+	openxlsx::addWorksheet(wb=wb, sheet="model_data_LI")
+	openxlsx::writeData(wb=wb, sheet="model_data_LI", x=data_LI)
+
+	openxlsx::addWorksheet(wb=wb, sheet="model_data_Yolo")
+	openxlsx::writeData(wb=wb, sheet="model_data_Yolo", x=data_Yolo)
+
+
+	openxlsx::addWorksheet(wb=wb, sheet="PCA_Sac")
+	openxlsx::writeData(wb=wb, sheet="PCA_Sac", x=format_PCA(PCA_Sac))
+
+	openxlsx::addWorksheet(wb=wb, sheet="PCA_Delta")
+	openxlsx::writeData(wb=wb, sheet="PCA_Delta", x=format_PCA(PCA_Delta))
+
+	openxlsx::addWorksheet(wb=wb, sheet="PCA_SJ")
+	openxlsx::writeData(wb=wb, sheet="PCA_SJ", x=format_PCA(PCA_SJ))
+
+	openxlsx::addWorksheet(wb=wb, sheet="PCA_LI")
+	openxlsx::writeData(wb=wb, sheet="PCA_LI", x=format_PCA(PCA_LI))
+
+	openxlsx::addWorksheet(wb=wb, sheet="PCA_Yolo")
+	openxlsx::writeData(wb=wb, sheet="PCA_Yolo", x=format_PCA(PCA_Yolo))
+
+	openxlsx::saveWorkbook(wb=wb, file=file.path(out_root, file_name), overwrite=TRUE)
 }
 
 my_cor <- function(x, y) {
@@ -362,18 +407,18 @@ nrow(tmp)
 
 
 ## Save model data:
-write.csv(SACPIK_model_data_Sac, file.path(out_root,"SACPIK_model_data_Sac.csv"), 
-          row.names=FALSE)
-write.csv(SACPIK_model_data_Delta, file.path(out_root,"SACPIK_model_data_Delta.csv"), 
-          row.names=FALSE)
-write.csv(SACPIK_model_data_SJ, file.path(out_root,"SACPIK_model_data_SJ.csv"), 
-          row.names=FALSE)
 
-SACPIK_PCA_compiled <- cbind(format_PCA(SACPIK_PCA_Sac), 
-                             format_PCA(SACPIK_PCA_Delta), 
-                             format_PCA(SACPIK_PCA_SJ))
-write.csv(SACPIK_PCA_compiled, file.path(out_root,"SACPIK_PCA_compiled.csv"), na="", 
-          row.names=FALSE)
+save_data_and_PCA(file_name="SACPIK_model_data_and_PCA.xlsx", 
+                  data_Sac=SACPIK_model_data_Sac, 
+                  data_Delta=SACPIK_model_data_Delta, 
+                  data_SJ=SACPIK_model_data_SJ, 
+                  data_LI=NULL,
+                  data_Yolo=NULL,
+                  PCA_Sac=SACPIK_PCA_Sac, 
+                  PCA_Delta=SACPIK_PCA_Delta, 
+                  PCA_SJ=SACPIK_PCA_SJ,
+                  PCA_LI=NULL,
+                  PCA_Yolo=NULL)
 
 ```
 
@@ -571,24 +616,18 @@ acf(SPLITT_model_data_Yolo$log_Index_Yolo)
 
 
 ## Save model data:
-write.csv(SPLITT_model_data_Sac, file.path(out_root,"SPLITT_model_data_Sac.csv"), 
-          row.names=FALSE)
-write.csv(SPLITT_model_data_Delta, file.path(out_root,"SPLITT_model_data_Delta.csv"), 
-          row.names=FALSE)
-write.csv(SPLITT_model_data_SJ, file.path(out_root,"SPLITT_model_data_SJ.csv"), 
-          row.names=FALSE)
-write.csv(SPLITT_model_data_LI, file.path(out_root,"SPLITT_model_data_LI.csv"), 
-          row.names=FALSE)
-write.csv(SPLITT_model_data_Yolo, file.path(out_root,"SPLITT_model_data_Yolo.csv"), 
-          row.names=FALSE)
 
-SPLITT_PCA_compiled <- cbind(format_PCA(SPLITT_PCA_Sac), 
-                             format_PCA(SPLITT_PCA_Delta), 
-                             format_PCA(SPLITT_PCA_SJ),
-                             format_PCA(SPLITT_PCA_LI),
-                             format_PCA(SPLITT_PCA_Yolo))
-write.csv(SPLITT_PCA_compiled, file.path(out_root,"SPLITT_PCA_compiled.csv"), na="", 
-          row.names=FALSE)
+save_data_and_PCA(file_name="SPLITT_model_data_and_PCA.xlsx", 
+                  data_Sac=SPLITT_model_data_Sac, 
+                  data_Delta=SPLITT_model_data_Delta, 
+                  data_SJ=SPLITT_model_data_SJ, 
+                  data_LI=SPLITT_model_data_LI, 
+                  data_Yolo=SPLITT_model_data_Yolo, 
+                  PCA_Sac=SPLITT_PCA_Sac, 
+                  PCA_Delta=SPLITT_PCA_Delta, 
+                  PCA_SJ=SPLITT_PCA_SJ, 
+                  PCA_LI=SPLITT_PCA_LI, 
+                  PCA_Yolo=SPLITT_PCA_Yolo)
 
 ```
 
@@ -761,21 +800,18 @@ acf(SACSUC_model_data_Yolo$log_Index_Yolo)
 
 
 ## Save model data:
-write.csv(SACSUC_model_data_Sac, file.path(out_root,"SACSUC_model_data_Sac.csv"), 
-          row.names=FALSE)
-write.csv(SACSUC_model_data_Delta, file.path(out_root,"SACSUC_model_data_Delta.csv"), 
-          row.names=FALSE)
-write.csv(SACSUC_model_data_SJ, file.path(out_root,"SACSUC_model_data_SJ.csv"), 
-          row.names=FALSE)
-write.csv(SACSUC_model_data_Yolo, file.path(out_root,"SACSUC_model_data_Yolo.csv"), 
-          row.names=FALSE)
 
-SACSUC_PCA_compiled <- cbind(format_PCA(SACSUC_PCA_Sac), 
-                             format_PCA(SACSUC_PCA_Delta), 
-                             format_PCA(SACSUC_PCA_SJ),
-                             format_PCA(SACSUC_PCA_Yolo))
-write.csv(SACSUC_PCA_compiled, file.path(out_root,"SACSUC_PCA_compiled.csv"), na="", 
-          row.names=FALSE)
+save_data_and_PCA(file_name="SACSUC_model_data_and_PCA.xlsx", 
+                  data_Sac=SACSUC_model_data_Sac, 
+                  data_Delta=SACSUC_model_data_Delta, 
+                  data_SJ=SACSUC_model_data_SJ, 
+                  data_LI=NULL,
+                  data_Yolo=SACSUC_model_data_Yolo, 
+                  PCA_Sac=SACSUC_PCA_Sac, 
+                  PCA_Delta=SACSUC_PCA_Delta, 
+                  PCA_SJ=SACSUC_PCA_SJ, 
+                  PCA_LI=NULL, 
+                  PCA_Yolo=SACSUC_PCA_Yolo)
 
 ```
 
@@ -948,21 +984,18 @@ acf(COMCAR_model_data_Yolo$log_Index_Yolo)
 
 
 ## Save model data:
-write.csv(COMCAR_model_data_Sac, file.path(out_root,"COMCAR_model_data_Sac.csv"), 
-          row.names=FALSE)
-write.csv(COMCAR_model_data_Delta, file.path(out_root,"COMCAR_model_data_Delta.csv"), 
-          row.names=FALSE)
-write.csv(COMCAR_model_data_SJ, file.path(out_root,"COMCAR_model_data_SJ.csv"), 
-          row.names=FALSE)
-write.csv(COMCAR_model_data_Yolo, file.path(out_root,"COMCAR_model_data_Yolo.csv"), 
-          row.names=FALSE)
 
-COMCAR_PCA_compiled <- cbind(format_PCA(COMCAR_PCA_Sac), 
-                             format_PCA(COMCAR_PCA_Delta), 
-                             format_PCA(COMCAR_PCA_SJ),
-                             format_PCA(COMCAR_PCA_Yolo))
-write.csv(COMCAR_PCA_compiled, file.path(out_root,"COMCAR_PCA_compiled.csv"), na="", 
-          row.names=FALSE)
+save_data_and_PCA(file_name="COMCAR_model_data_and_PCA.xlsx", 
+                  data_Sac=COMCAR_model_data_Sac, 
+                  data_Delta=COMCAR_model_data_Delta, 
+                  data_SJ=COMCAR_model_data_SJ, 
+                  data_LI=NULL,
+                  data_Yolo=COMCAR_model_data_Yolo,
+                  PCA_Sac=COMCAR_PCA_Sac, 
+                  PCA_Delta=COMCAR_PCA_Delta, 
+                  PCA_SJ=COMCAR_PCA_SJ,
+                  PCA_LI=NULL,
+                  PCA_Yolo=COMCAR_PCA_Yolo)
 
 ```
 
@@ -1095,21 +1128,18 @@ acf(GOLDSHI_model_data_Yolo$log_Index_Yolo)
 
 
 ## Save model data:
-write.csv(GOLDSHI_model_data_Sac, file.path(out_root,"GOLDSHI_model_data_Sac.csv"), 
-          row.names=FALSE)
-write.csv(GOLDSHI_model_data_Delta, file.path(out_root,"GOLDSHI_model_data_Delta.csv"), 
-          row.names=FALSE)
-write.csv(GOLDSHI_model_data_SJ, file.path(out_root,"GOLDSHI_model_data_SJ.csv"), 
-          row.names=FALSE)
-write.csv(GOLDSHI_model_data_Yolo, file.path(out_root,"GOLDSHI_model_data_Yolo.csv"), 
-          row.names=FALSE)
 
-GOLDSHI_PCA_compiled <- cbind(format_PCA(GOLDSHI_PCA_Sac), 
-                              format_PCA(GOLDSHI_PCA_Delta), 
-                              format_PCA(GOLDSHI_PCA_SJ),
-                              format_PCA(GOLDSHI_PCA_Yolo))
-write.csv(GOLDSHI_PCA_compiled, file.path(out_root,"GOLDSHI_PCA_compiled.csv"), na="", 
-          row.names=FALSE)
+save_data_and_PCA(file_name="GOLDSHI_model_data_and_PCA.xlsx", 
+                  data_Sac=GOLDSHI_model_data_Sac, 
+                  data_Delta=GOLDSHI_model_data_Delta, 
+                  data_SJ=GOLDSHI_model_data_SJ, 
+                  data_LI=NULL,
+                  data_Yolo=GOLDSHI_model_data_Yolo,
+                  PCA_Sac=GOLDSHI_PCA_Sac, 
+                  PCA_Delta=GOLDSHI_PCA_Delta, 
+                  PCA_SJ=GOLDSHI_PCA_SJ,
+                  PCA_LI=NULL,
+                  PCA_Yolo=GOLDSHI_PCA_Yolo)
 
 ```
 
